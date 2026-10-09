@@ -155,13 +155,14 @@ bool ParsePreset(const std::string& Text, Preset& Out, std::string& Error)
 			target.tier = tiers[rarity];
 			target.stat = stat->ref;
 			// The planner stores rolls on the full scale: 100 normal, 65 defense to rare, 40 epic.
+			// Low-level items roll percent stats on a smaller one, so keep a lower roll as a share.
 			double top = rarity == 0 ? 100 : rarity == 4 ? 40 : 65;
 			if (roll >= top)
 				target.goal = Goal::MaxRoll;
 			else
 			{
-				target.goal = Goal::Roll;
-				target.amount = roll;
+				target.goal = Goal::Share;
+				target.amount = roll * 100.0 / top;
 			}
 			slot.targets.push_back(target);
 		}

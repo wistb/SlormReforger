@@ -201,17 +201,18 @@ const StatInfo* FindStat(const std::string& Ref)
 	return nullptr;
 }
 
-std::vector<std::pair<std::string, std::string>> SpecialStats(const std::string& Tier)
+std::vector<std::pair<std::string, std::string>> SpecialStats(const std::string& Tier, int Hero)
 {
+	if (Hero < 0) Hero = g_HeroClass;
 	std::vector<std::pair<std::string, std::string>> out;
-	const std::map<int, std::string>& names = Tier == "RP" ? g_Smiths : Tier == "AT" ? g_Traits : g_Skills[g_HeroClass >= 0 && g_HeroClass < 3 ? g_HeroClass : 0];
+	const std::map<int, std::string>& names = Tier == "RP" ? g_Smiths : Tier == "AT" ? g_Traits : g_Skills[Hero >= 0 && Hero < 3 ? Hero : 0];
 	const char* suffix = Tier == "RP" ? " Affinity" : Tier == "MA" ? " Mastery" : "";
 	for (const auto& [id, name] : names)
 		out.emplace_back(Lower(Tier) + "_" + std::to_string(id), name + suffix);
 	return out;
 }
 
-std::string StatName(const std::string& Ref)
+std::string StatName(const std::string& Ref, int Hero)
 {
 	if (Ref.size() > 3 && Ref[2] == '_')
 	{
@@ -219,7 +220,7 @@ std::string StatName(const std::string& Ref)
 		for (char& c : tier) c = static_cast<char>(toupper(static_cast<unsigned char>(c)));
 		if (IsSpecialTier(tier))
 		{
-			for (const auto& [ref, name] : SpecialStats(tier))
+			for (const auto& [ref, name] : SpecialStats(tier, Hero))
 				if (ref == Ref) return name;
 			return tier + " " + Ref.substr(3);
 		}

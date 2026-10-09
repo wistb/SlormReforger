@@ -1,6 +1,7 @@
 #include "Reforger.hpp"
 #include "Version.hpp"
 #include <algorithm>
+#include <cmath>
 #include <cstdarg>
 #include <fstream>
 #include <sstream>
@@ -295,6 +296,7 @@ static void LoadConfig()
 			if (goal == "any") target.goal = Goal::Any;
 			else if (goal == "max") target.goal = Goal::MaxRoll;
 			else if (goal.rfind("roll:", 0) == 0) { target.goal = Goal::Roll; target.amount = std::stod(goal.substr(5)); }
+			else if (goal.rfind("share:", 0) == 0) { target.goal = Goal::Share; target.amount = std::stod(goal.substr(6)); }
 			else { target.goal = Goal::Value; target.amount = std::stod(goal); }
 		}
 		catch (...) { continue; }
@@ -315,6 +317,7 @@ void SaveConfig()
 		case Goal::Any: file << "any"; break;
 		case Goal::MaxRoll: file << "max"; break;
 		case Goal::Roll: file << "roll:" << target.amount; break;
+		case Goal::Share: file << "share:" << target.amount; break;
 		default: file << target.amount; break;
 		}
 		file << '\n';
@@ -374,6 +377,8 @@ static bool Met(const Target& Target, const Affix& Affix)
 	case Goal::Any: return true;
 	case Goal::MaxRoll: return Affix.roll >= MaxRoll(Target.tier, Target.stat);
 	case Goal::Roll: return Affix.roll >= Target.amount;
+	// Rolls are whole numbers.
+	case Goal::Share: return Affix.roll >= std::round(MaxRoll(Target.tier, Target.stat) * Target.amount / 100);
 	default: return Affix.has_shown && Affix.shown >= Target.amount;
 	}
 }

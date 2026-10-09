@@ -99,11 +99,12 @@ static bool InPool(const StatInfo& Stat, const std::string& Tier)
 	return FindInPool(Tier, Stat.ref) != nullptr;
 }
 
-static std::string Describe(const Target& Target)
+// Hero names a mastery stat for another class than the slotted item's.
+static std::string Describe(const Target& Target, int Hero = -1)
 {
 	if (IsLevelTier(Target.tier))
 		return "Item level: max level";
-	std::string text = std::string(TierName(Target.tier)) + ": " + StatName(Target.stat);
+	std::string text = std::string(TierName(Target.tier)) + ": " + StatName(Target.stat, Hero);
 	char amount[32];
 	snprintf(amount, sizeof(amount), "%g", Target.amount);
 	switch (Target.goal)
@@ -111,6 +112,9 @@ static std::string Describe(const Target& Target)
 	case Goal::Any: return text + (IsSpecialTier(Target.tier) ? ", any value" : ", any roll");
 	case Goal::MaxRoll: return text + ", max roll";
 	case Goal::Roll: return text + ", roll at least " + amount;
+	case Goal::Share:
+		snprintf(amount, sizeof(amount), "%.0f", Target.amount);
+		return text + ", at least " + amount + "% of max roll";
 	default: return text + ", value at least " + amount;
 	}
 }
@@ -229,7 +233,9 @@ static bool DrawImportPreset()
 		if (i > 0) ImGui::SameLine();
 		if (ImGui::Button(label.c_str()))
 		{
-			g_Targets = matches[i]->targets;
+			g_Targets.clear();
+			for (const Target& target : matches[i]->targets)
+				if (target.tier != "MA" || preset.hero == g_HeroClass) g_Targets.push_back(target);
 			// What can roll depends on the item level, so a higher-level build levels the item first.
 			if (matches[i]->level > g_ItemLevel)
 			{
@@ -240,9 +246,24 @@ static bool DrawImportPreset()
 			}
 			changed = true;
 		}
-		ImGui::SetItemTooltip("Load the %s from %s.\nThis replaces all current targets.", Lower(matches[i]->label).c_str(), preset.name.c_str());
+		std::string tip = "Load the " + Lower(matches[i]->label) + " from " + preset.name + ".\nThis replaces all current targets.";
+		ImGui::SetItemTooltip("%s", tip.c_str());
 	}
 	return changed;
+}
+
+// Mastery stats belong to a class; an import onto another class's item leaves them out.
+static void DrawPresetWarning()
+{
+	if (g_ActivePreset < 0 || g_ActivePreset >= static_cast<int>(g_Presets.size()) || !g_HasItem)
+		return;
+	const Preset& preset = g_Presets[g_ActivePreset];
+	bool mastery = false;
+	for (const PresetSlot& slot : preset.slots)
+		for (const Target& target : slot.targets)
+			if (slot.slot == Lower(g_ItemSlot) && target.tier == "MA") mastery = true;
+	if (mastery && preset.hero != g_HeroClass)
+		ImGui::TextColored({ 0.9f, 0.8f, 0.3f, 1.0f }, "%s is a %s build and this is a %s item: its Mastery target is left out.", preset.name.c_str(), HeroName(preset.hero), HeroName(g_HeroClass));
 }
 
 static bool DrawPresets()
@@ -322,7 +343,7 @@ static bool DrawPresets()
 		if (ImGui::TreeNodeEx(title.c_str(), here ? ImGuiTreeNodeFlags_DefaultOpen : 0))
 		{
 			for (const Target& target : slot.targets)
-				ImGui::TextColored(TierColor(target.tier, target.stat), "%s", Describe(target).c_str());
+				ImGui::TextColored(TierColor(target.tier, target.stat), "%s", Describe(target, preset.hero).c_str());
 			if (slot.legendary)
 				ImGui::TextDisabled("Legendary effect: not imported, it cannot be targeted.");
 			ImGui::TreePop();
@@ -346,6 +367,7 @@ static bool DrawTargets()
 			changed = true;
 		}
 	}
+	DrawPresetWarning();
 	if (g_Targets.empty())
 		ImGui::TextDisabled("None. Start will max the Reforge Scores recipe selected in the game.");
 

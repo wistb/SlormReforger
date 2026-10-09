@@ -20,7 +20,8 @@ struct Affix
 	bool has_shown = false;
 };
 
-enum class Goal { Any, MaxRoll, Value, Roll };
+// Share is a roll given as a percent of the best roll, so it holds at any item level.
+enum class Goal { Any, MaxRoll, Value, Roll, Share };
 
 struct Target
 {
@@ -179,7 +180,8 @@ inline bool IsLevelTier(const std::string& Tier)
 // The game lists the recipe only while the item is below the hero's level.
 bool UpdateOffered();
 // Every stat a special tier can hold, as (ref, name).
-std::vector<std::pair<std::string, std::string>> SpecialStats(const std::string& Tier);
+// Mastery names are per class: Hero picks one, -1 means the hero whose item is in the slot.
+std::vector<std::pair<std::string, std::string>> SpecialStats(const std::string& Tier, int Hero = -1);
 
 const PoolEntry* FindInPool(const std::string& Tier, const std::string& Stat);
 double MaxRoll(const std::string& Tier, const std::string& Stat);
@@ -198,7 +200,7 @@ const char* HeroName(int Class);
 
 void LoadGameData();
 const StatInfo* FindStat(const std::string& Ref);
-std::string StatName(const std::string& Ref);
+std::string StatName(const std::string& Ref, int Hero = -1);
 
 bool OverlayInstall(YYTK::YYTKInterface* Yytk);
 bool OverlayWantsMouse();
