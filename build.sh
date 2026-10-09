@@ -26,11 +26,22 @@ if [ "${1:-}" = package ]; then
 	VERSION=$(sed -n 's/^#define SLORMREFORGER_VERSION "\(.*\)"/\1/p' source/Version.hpp)
 	mkdir -p dist
 	rm -f "dist/SlormReforger-$VERSION.zip"
+	# Laid out to be extracted straight into the game folder.
 	python3 - "dist/SlormReforger-$VERSION.zip" <<'PY'
 import sys, zipfile
+files = {
+    "version.dll": "bin/version.dll",
+    "SlormReforger-README.txt": "packaging/README.txt",
+    "mods/Native/AurieCore.dll": "redist/AurieCore.dll",
+    "mods/Aurie/YYToolkit.dll": "redist/YYToolkit.dll",
+    "mods/Aurie/SlormReforger.dll": "bin/SlormReforger.dll",
+    "mods/licenses/NOTICE.txt": "redist/NOTICE.txt",
+    "mods/licenses/AGPL-3.0.txt": "LICENSE",
+    "mods/licenses/DearImGui-MIT.txt": "vendor/imgui/LICENSE.txt",
+}
 with zipfile.ZipFile(sys.argv[1], "w", zipfile.ZIP_DEFLATED) as archive:
-    archive.write("bin/SlormReforger.dll", "SlormReforger.dll")
-    archive.write("nexus/README.txt", "README.txt")
+    for name, source in files.items():
+        archive.write(source, name)
 PY
 	echo "wrote dist/SlormReforger-$VERSION.zip"
 fi

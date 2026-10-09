@@ -1,0 +1,20 @@
+This download contains the following components.
+
+SlormReforger
+  https://github.com/wistb/SlormReforger
+  GNU Affero General Public License v3.0 (AGPL-3.0.txt)
+  Files: mods\Aurie\SlormReforger.dll, version.dll
+
+Aurie Framework v2.0.2, unmodified release build
+  https://github.com/AurieFramework/Aurie
+  GNU Affero General Public License v3.0 (AGPL-3.0.txt)
+  File: mods\Native\AurieCore.dll
+
+YYToolkit v5.0.0c beta, unmodified release build
+  https://github.com/AurieFramework/YYToolkit
+  GNU Affero General Public License v3.0 (AGPL-3.0.txt)
+  File: mods\Aurie\YYToolkit.dll
+
+Dear ImGui v1.91.9b, compiled into SlormReforger.dll
+  https://github.com/ocornut/imgui
+  MIT License (DearImGui-MIT.txt)
