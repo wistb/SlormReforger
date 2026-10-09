@@ -45,5 +45,6 @@ jobs:
           display_name: SlormReforger
           archive_existing_version: true
           update_mod_version: true
+          primary_mod_manager_download: true
           mod_id: ${{ vars.NEXUS_MOD_ID }}
           changelog: ${{ env.CHANGELOG }}
