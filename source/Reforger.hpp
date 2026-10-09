@@ -88,6 +88,9 @@ extern int g_MinStock[];
 extern bool g_AutoLock;
 // Apply the game's "Add" recipes when a target's tier is not on the item.
 extern bool g_AutoAdd;
+// Make room for a target: reroll its stat out of another tier, and unlock a stat
+// that is not a target when the target's tier is fully locked.
+extern bool g_MoveTiers;
 extern Appearance g_Appearance;
 // Set while the hotkey is being rebound, so the key press does not also toggle the overlay.
 extern bool g_SuppressToggle;

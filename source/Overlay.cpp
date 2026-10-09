@@ -542,6 +542,10 @@ static bool DrawRunSettings()
 				if (!on_item && (tier == target.tier || (AddRank(tier) >= 0 && AddRank(tier) <= AddRank(target.tier)))) relevant = true;
 			}
 			else if (Lower(target.tier) == recipe.tier) relevant = true;
+			// Moving a stat also spends on the tier it sits in.
+			else if (g_MoveTiers && (recipe.type == 1 || recipe.type == 3))
+				for (const Affix& affix : g_Item)
+					if (affix.stat == target.stat && Lower(affix.tier) == recipe.tier) relevant = true;
 		}
 		if (!relevant)
 			continue;
@@ -567,6 +571,8 @@ static bool DrawRunSettings()
 	changed |= ImGui::Checkbox("Allow rerolling pure stats", &g_AllowPureLoss);
 	changed |= ImGui::Checkbox("Lock stats as they reach their target", &g_AutoLock);
 	changed |= ImGui::Checkbox("Add missing tiers automatically", &g_AutoAdd);
+	changed |= ImGui::Checkbox("Allow stats to shuffle tiers", &g_MoveTiers);
+	ImGui::SetItemTooltip("A target stat that sits in another tier is unlocked and rerolled out of it.\nIf every stat in the target's tier is locked, one that is not a target is unlocked.");
 	g_MaxAttempts = (std::max)(g_MaxAttempts, 1);
 	return changed;
 }

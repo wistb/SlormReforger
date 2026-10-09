@@ -25,6 +25,7 @@ bool g_AllowPureLoss = false;
 int g_MinStock[MATERIAL_COUNT] = {};
 bool g_AutoLock = false;
 bool g_AutoAdd = false;
+bool g_MoveTiers = false;
 Appearance g_Appearance;
 bool g_SuppressToggle = false;
 
@@ -231,6 +232,7 @@ static void LoadConfig()
 	std::fill(std::begin(g_MinStock), std::end(g_MinStock), 0);
 	g_AutoLock = false;
 	g_AutoAdd = false;
+	g_MoveTiers = false;
 	g_Appearance = Appearance();
 
 	std::ifstream file(g_ConfigPath);
@@ -256,6 +258,7 @@ static void LoadConfig()
 		}
 		if (first == "auto_lock") { int flag = 0; words >> flag; g_AutoLock = flag != 0; continue; }
 		if (first == "auto_add") { int flag = 0; words >> flag; g_AutoAdd = flag != 0; continue; }
+		if (first == "move_tiers") { int flag = 0; words >> flag; g_MoveTiers = flag != 0; continue; }
 		if (first == "theme") { words >> g_Appearance.theme; continue; }
 		if (first == "accent") { int on = 0; words >> on >> g_Appearance.accent[0] >> g_Appearance.accent[1] >> g_Appearance.accent[2]; g_Appearance.custom_accent = on != 0; continue; }
 		if (first == "primary") { int on = 0; words >> on >> g_Appearance.primary[0] >> g_Appearance.primary[1] >> g_Appearance.primary[2]; g_Appearance.custom_primary = on != 0; continue; }
@@ -306,6 +309,7 @@ void SaveConfig()
 		<< "allow_pure_loss " << (g_AllowPureLoss ? 1 : 0) << '\n'
 		<< "auto_lock " << (g_AutoLock ? 1 : 0) << '\n'
 		<< "auto_add " << (g_AutoAdd ? 1 : 0) << '\n'
+		<< "move_tiers " << (g_MoveTiers ? 1 : 0) << '\n'
 		<< "theme " << g_Appearance.theme << '\n'
 		<< "accent " << (g_Appearance.custom_accent ? 1 : 0) << ' ' << g_Appearance.accent[0] << ' ' << g_Appearance.accent[1] << ' ' << g_Appearance.accent[2] << '\n'
 		<< "primary " << (g_Appearance.custom_primary ? 1 : 0) << ' ' << g_Appearance.primary[0] << ' ' << g_Appearance.primary[1] << ' ' << g_Appearance.primary[2] << '\n'
@@ -369,6 +373,13 @@ bool UpdateOffered()
 	return false;
 }
 
+// "a Rare", "an Epic".
+static std::string WithArticle(const std::string& Name)
+{
+	bool vowel = !Name.empty() && std::string("AEIOUaeiou").find(Name[0]) != std::string::npos;
+	return (vowel ? "an " : "a ") + Name;
+}
+
 // 0 met, 1 still to do, 2 cannot be reached by reforging.
 int TargetState(const Target& Target, std::string& Text)
 {
@@ -421,8 +432,19 @@ int TargetState(const Target& Target, std::string& Text)
 	}
 	if (elsewhere)
 	{
-		Text = std::string("already a ") + TierName(elsewhere->tier) + " stat";
-		return 2;
+		Text = "already " + WithArticle(TierName(elsewhere->tier)) + " stat";
+		if (!g_MoveTiers)
+			return 2;
+		// Wanted in both tiers: moving it would undo the other target.
+		for (const ::Target& other : g_Targets)
+		{
+			if (other.stat != Target.stat || other.tier == Target.tier)
+				continue;
+			Text = "also " + WithArticle(TierName(other.tier)) + " target";
+			return 2;
+		}
+		Text += elsewhere->locked ? ", will unlock and move" : ", will move";
+		return 1;
 	}
 	auto pool = g_Pools.find(Target.tier);
 	if (pool != g_Pools.end() && !pool->second.empty() && !FindInPool(Target.tier, Target.stat))
@@ -441,7 +463,10 @@ int TargetState(const Target& Target, std::string& Text)
 	if (unlocked == 0)
 	{
 		Text = std::string("all ") + TierName(Target.tier) + " stats locked";
-		return 2;
+		if (!g_MoveTiers)
+			return 2;
+		Text += ", will unlock one";
+		return 1;
 	}
 	int possible = 0;
 	if (IsSpecialTier(Target.tier))
@@ -1019,6 +1044,9 @@ static void Tick(CInstance* Self, CInstance* Other)
 	// First unmet target decides the next reroll.
 	const Target* pending = nullptr;
 	int recipe_type = 0;
+	// Tier the reroll hits; another tier than the target's when a stat is being moved out of it.
+	std::string reroll_tier;
+	bool evict = false;
 	// The level comes before any reroll; it changes what the stats can roll.
 	bool level_up = false;
 	for (const Target& target : g_RunTargets)
@@ -1054,6 +1082,39 @@ static void Tick(CInstance* Self, CInstance* Other)
 			if (affix.tier == target.tier) in_tier = true;
 		if (!in_tier)
 			recipe_type = 2;
+		// The stat sits in another tier: reroll it out of there first, unlocking it if needed.
+		for (const Affix& affix : g_Item)
+		{
+			if (match || !g_MoveTiers || affix.tier == target.tier || affix.stat != target.stat)
+				continue;
+			if (affix.locked)
+			{
+				lock_affix = &affix;
+				unlock = true;
+			}
+			else
+			{
+				recipe_type = 1;
+				reroll_tier = affix.tier;
+				evict = true;
+			}
+		}
+		// Every stat of the tier is locked: free one that is not a target, so the reroll has room.
+		bool room = false;
+		for (const Affix& affix : g_Item)
+			if (affix.tier == target.tier && !affix.locked) room = true;
+		for (const Affix& affix : g_Item)
+		{
+			if (match || !g_MoveTiers || room || evict || lock_affix || affix.tier != target.tier)
+				continue;
+			bool wanted = false;
+			for (const Target& other : g_RunTargets)
+				if (other.tier == affix.tier && other.stat == affix.stat) wanted = true;
+			if (wanted)
+				continue;
+			lock_affix = &affix;
+			unlock = true;
+		}
 		break;
 	}
 	if (!pending && !lock_affix)
@@ -1091,15 +1152,17 @@ static void Tick(CInstance* Self, CInstance* Other)
 	}
 	else if (!lock_affix)
 	{
+		if (!evict)
+			reroll_tier = pending->tier;
 		// Both reroll types hit every unlocked stat of the tier.
 		for (const Affix& affix : g_Item)
 		{
-			if ((!g_AllScores && affix.tier != pending->tier) || affix.locked)
+			if ((!g_AllScores && affix.tier != reroll_tier) || affix.locked)
 				continue;
 			if (affix.pure > 100 && !g_AllowPureLoss)
 				return Stop("tier has a pure stat (allow rerolling pure stats to continue)");
 		}
-		recipe = FindRecipe(Self, recipe_type, g_AllScores ? "" : pending->tier);
+		recipe = FindRecipe(Self, recipe_type, g_AllScores ? "" : reroll_tier);
 	}
 
 	if (recipe < 0)
@@ -1139,6 +1202,8 @@ static void Tick(CInstance* Self, CInstance* Other)
 		Note("%d: update item level from %d", g_Attempts, g_ItemLevel);
 	else if (!add_tier.empty())
 		Note("%d: add %s stats for %s", g_Attempts, TierName(add_tier), StatName(pending->stat).c_str());
+	else if (evict)
+		Note("%d: reroll %s stats to free %s", g_Attempts, TierName(reroll_tier), StatName(pending->stat).c_str());
 	else
 		Note("%d: reroll %s %s for %s", g_Attempts, TierName(pending->tier), recipe_type ? "stats" : "scores", StatName(pending->stat).c_str());
 }
