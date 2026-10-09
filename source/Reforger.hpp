@@ -76,6 +76,8 @@ struct Appearance
 };
 
 constexpr int MATERIAL_COUNT = 11;
+// Most stats the Epic tier holds; a stats reroll leaves one to three.
+constexpr int EPIC_STATS = 3;
 
 // Guards everything below; the game step writes it, the overlay reads and edits it.
 extern std::recursive_mutex g_Lock;

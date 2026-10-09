@@ -47,8 +47,6 @@ std::vector<Recipe> g_Recipes;
 double g_Stock[MATERIAL_COUNT] = {};
 double g_Gold = 0;
 
-// Targets of the current run; g_Targets, or derived from the selected recipe.
-static std::vector<Target> g_RunTargets;
 static bool g_KeyWasDown = false;
 static int g_Cooldown = 0;
 static int g_Refresh = 0;
@@ -408,11 +406,15 @@ int TargetState(const Target& Target, std::string& Text)
 	int wanted = 0;
 	for (const ::Target& other : g_Targets)
 		if (other.tier == Target.tier) wanted++;
+	// Except in the Epic tier, where a stats reroll leaves one to three stats.
+	bool growing = false;
 	if (in_tier > 0 && wanted > in_tier)
 	{
 		snprintf(text, sizeof(text), "%d targets, item has %d %s stat%s", wanted, in_tier, TierName(Target.tier), in_tier == 1 ? "" : "s");
 		Text = text;
-		return 2;
+		growing = Target.tier == "E" && wanted <= EPIC_STATS;
+		if (!growing)
+			return 2;
 	}
 	if (match)
 	{
@@ -460,6 +462,11 @@ int TargetState(const Target& Target, std::string& Text)
 		Text += ", will add";
 		return 1;
 	}
+	if (growing)
+	{
+		Text += ", will reroll for more";
+		return 1;
+	}
 	if (unlocked == 0)
 	{
 		Text = std::string("all ") + TierName(Target.tier) + " stats locked";
@@ -479,12 +486,35 @@ int TargetState(const Target& Target, std::string& Text)
 	return 1;
 }
 
+// Targets of the current run; g_Targets, or derived from the selected recipe.
+static std::vector<Target> g_RunTargets;
+
+// The run wants more stats in the tier than the item has there.
+static bool ShortTier(const std::string& Tier)
+{
+	int have = 0, wanted = 0;
+	for (const Affix& affix : g_Item)
+		if (affix.tier == Tier) have++;
+	for (const Target& target : g_RunTargets)
+		if (target.tier == Tier) wanted++;
+	return have > 0 && wanted > have;
+}
+
+static int UnlockedIn(const std::string& Tier)
+{
+	int count = 0;
+	for (const Affix& affix : g_Item)
+		if (affix.tier == Tier && !affix.locked) count++;
+	return count;
+}
+
 static double g_GoldAtStart = 0;
 // Lock or unlock applied last step, checked on the next.
 static std::string g_LockTier, g_LockStat;
 static bool g_LockWanted = false;
-// Tier an "Add" recipe was applied for last step, checked on the next.
+// Tier an "Add" recipe was applied for last step, checked on the next, and how many stats it had.
 static std::string g_AddTier;
+static int g_AddCount = 0;
 // Item level before an "Update Item" applied last step, 0 for none.
 static int g_LevelBefore = 0;
 
@@ -903,6 +933,8 @@ static void Start(CInstance* Self, CInstance* Other)
 	g_Cooldown = 0;
 	g_Status = "running";
 	Note("started, %d targets, max %d reforges", static_cast<int>(g_RunTargets.size()), g_MaxAttempts);
+	for (const Recipe& recipe : g_Recipes)
+		Log("  recipe '%s' / '%s' type %d cost %s code '%s'", recipe.label.c_str(), recipe.detail.c_str(), recipe.type, recipe.materials.c_str(), recipe.tier.c_str());
 }
 
 static void Tick(CInstance* Self, CInstance* Other)
@@ -987,9 +1019,10 @@ static void Tick(CInstance* Self, CInstance* Other)
 	}
 	if (!g_AddTier.empty())
 	{
-		bool done = false;
+		int count = 0;
 		for (const Affix& affix : g_Item)
-			if (affix.tier == g_AddTier) done = true;
+			if (affix.tier == g_AddTier) count++;
+		bool done = count > g_AddCount;
 		std::string tier = g_AddTier;
 		g_AddTier.clear();
 		if (!done)
@@ -1033,6 +1066,9 @@ static void Tick(CInstance* Self, CInstance* Other)
 					if (other.tier == target.tier && other.stat == target.stat) present = true;
 				if (!present) missing = true;
 			}
+			// A tier with fewer stats than targets has to keep one stat free for the reroll that grows it.
+			if (own && !affix.locked && ShortTier(affix.tier) && UnlockedIn(affix.tier) <= 1)
+				continue;
 			if (own && (missing || Met(*own, affix)) != affix.locked)
 			{
 				lock_affix = &affix;
@@ -1115,6 +1151,23 @@ static void Tick(CInstance* Self, CInstance* Other)
 			lock_affix = &affix;
 			unlock = true;
 		}
+		// A short tier that is fully locked cannot grow; free a stat even if it is a target.
+		for (int pass = 0; pass < 2; pass++)
+		{
+			for (const Affix& affix : g_Item)
+			{
+				if (match || room || evict || lock_affix || affix.tier != target.tier || !ShortTier(target.tier))
+					continue;
+				// Stats that are not targets go first.
+				bool wanted = false;
+				for (const Target& other : g_RunTargets)
+					if (other.tier == affix.tier && other.stat == affix.stat) wanted = true;
+				if (wanted && pass == 0)
+					continue;
+				lock_affix = &affix;
+				unlock = true;
+			}
+		}
 		break;
 	}
 	if (!pending && !lock_affix)
@@ -1185,6 +1238,9 @@ static void Tick(CInstance* Self, CInstance* Other)
 		g_LockWanted = !unlock;
 	}
 	g_AddTier = add_tier;
+	g_AddCount = 0;
+	for (const Affix& affix : g_Item)
+		if (affix.tier == add_tier) g_AddCount++;
 	g_LevelBefore = level_up ? g_ItemLevel : 0;
 	RValue* arguments[1] = { &argument };
 	Log("applying recipe %d%s", recipe, lock_affix ? " (lock)" : "");
