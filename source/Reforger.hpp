@@ -59,6 +59,22 @@ struct PoolEntry
 	bool on_item = false;
 };
 
+// Overlay appearance, saved with the rest of the config.
+struct Appearance
+{
+	int theme = 0;
+	bool custom_accent = false;
+	float accent[3] = { 0.78f, 0.62f, 0.25f };
+	// Title bar, tabs, input fields and table headers.
+	bool custom_primary = false;
+	float primary[3] = { 0.16f, 0.29f, 0.48f };
+	float opacity = 0.95f;
+	float scale = 1.0f;
+	bool show_costs = true;
+	// Virtual-key code that shows or hides the overlay.
+	int hotkey = 0x75;
+};
+
 constexpr int MATERIAL_COUNT = 11;
 
 // Guards everything below; the game step writes it, the overlay reads and edits it.
@@ -67,8 +83,12 @@ extern std::recursive_mutex g_Lock;
 extern std::vector<Target> g_Targets;
 extern int g_MaxAttempts;
 extern bool g_AllowPureLoss;
-extern int g_MinStock;
+// Reserve kept of each material, by material id.
+extern int g_MinStock[];
 extern bool g_AutoLock;
+extern Appearance g_Appearance;
+// Set while the hotkey is being rebound, so the key press does not also toggle the overlay.
+extern bool g_SuppressToggle;
 
 extern bool g_Visible;
 extern bool g_Running;

@@ -1,4 +1,5 @@
 #include "Reforger.hpp"
+#include "Version.hpp"
 #include <imgui.h>
 #include <imgui_impl_dx11.h>
 #include <imgui_impl_win32.h>
@@ -135,8 +136,19 @@ static bool DrawItem()
 			ImGui::TextColored(TierColor(affix.tier), "%s", TierName(affix.tier));
 			ImGui::TableNextColumn();
 			ImGui::TextUnformatted(StatName(affix.stat).c_str());
-			if (affix.pure > 100) { ImGui::SameLine(); ImGui::TextColored(PURE_COLOR, "pure"); }
-			if (affix.locked) { ImGui::SameLine(); ImGui::TextDisabled("locked"); }
+			// Same tags and colours as the stat dropdown.
+			bool tagged = false;
+			if (affix.pure > 100)
+			{
+				ImGui::SameLine();
+				ImGui::TextColored(PURE_COLOR, "[pure]");
+				tagged = true;
+			}
+			if (affix.locked)
+			{
+				ImGui::SameLine(0, tagged ? 0.0f : -1.0f);
+				ImGui::TextColored({ 1.0f, 0.4f, 0.4f, 1.0f }, "[locked]");
+			}
 			ImGui::TableNextColumn();
 			if (reforgeable)
 				ImGui::Text("%g / %g", affix.roll, MaxRoll(affix.tier, affix.stat));
@@ -266,19 +278,252 @@ static bool DrawTargets()
 	return changed;
 }
 
-static bool DrawSettings()
+static std::string KeyName(int Key)
+{
+	if (Key >= VK_F1 && Key <= VK_F24)
+		return "F" + std::to_string(Key - VK_F1 + 1);
+	UINT scan = MapVirtualKeyW(Key, MAPVK_VK_TO_VSC);
+	// Navigation keys share scan codes with the numpad unless flagged as extended.
+	bool extended = Key == VK_INSERT || Key == VK_DELETE || Key == VK_HOME || Key == VK_END || Key == VK_PRIOR || Key == VK_NEXT
+		|| Key == VK_LEFT || Key == VK_RIGHT || Key == VK_UP || Key == VK_DOWN || Key == VK_DIVIDE || Key == VK_RCONTROL || Key == VK_RMENU;
+	char name[64] = {};
+	if (scan && GetKeyNameTextA(static_cast<LONG>((scan << 16) | (extended ? 1 << 24 : 0)), name, sizeof(name)) > 0)
+		return name;
+	return "key " + std::to_string(Key);
+}
+
+// Returns a key that is down, for rebinding. Mouse buttons are skipped.
+static int PressedKey()
+{
+	for (int key = 8; key <= 254; key++)
+	{
+		if (key == VK_LBUTTON || key == VK_RBUTTON || key == VK_MBUTTON || key == VK_XBUTTON1 || key == VK_XBUTTON2)
+			continue;
+		// Skip the side-neutral modifier codes; the left/right ones report the same press.
+		if (key == VK_SHIFT || key == VK_CONTROL || key == VK_MENU)
+			continue;
+		if (GetAsyncKeyState(key) & 0x8000)
+			return key;
+	}
+	return 0;
+}
+
+static const char* THEME_NAMES[] = { "Dark", "Light", "Classic", "Slormancer" };
+
+// Colours every preset derives from one accent.
+static void SetAccent(ImVec4 accent)
+{
+	ImVec4* colors = ImGui::GetStyle().Colors;
+	auto with = [&](float alpha) { return ImVec4(accent.x, accent.y, accent.z, alpha); };
+	auto dim = [&](float factor) { return ImVec4(accent.x * factor, accent.y * factor, accent.z * factor, 1.0f); };
+	colors[ImGuiCol_Button] = with(0.45f);
+	colors[ImGuiCol_ButtonHovered] = with(0.75f);
+	colors[ImGuiCol_ButtonActive] = with(1.0f);
+	colors[ImGuiCol_Header] = with(0.35f);
+	colors[ImGuiCol_HeaderHovered] = with(0.65f);
+	colors[ImGuiCol_HeaderActive] = with(0.9f);
+	colors[ImGuiCol_FrameBgHovered] = with(0.3f);
+	colors[ImGuiCol_FrameBgActive] = with(0.5f);
+	colors[ImGuiCol_CheckMark] = with(1.0f);
+	colors[ImGuiCol_SliderGrab] = with(0.8f);
+	colors[ImGuiCol_SliderGrabActive] = with(1.0f);
+	colors[ImGuiCol_Tab] = dim(0.4f);
+	colors[ImGuiCol_TabHovered] = with(0.8f);
+	colors[ImGuiCol_TabSelected] = dim(0.7f);
+	colors[ImGuiCol_TitleBgActive] = dim(0.45f);
+	colors[ImGuiCol_SeparatorHovered] = with(0.7f);
+	colors[ImGuiCol_SeparatorActive] = with(1.0f);
+	colors[ImGuiCol_TextSelectedBg] = with(0.4f);
+}
+
+// Bars and fields: title bar, unselected tabs, input fields, table headers.
+static void SetPrimary(ImVec4 primary)
+{
+	ImVec4* colors = ImGui::GetStyle().Colors;
+	auto shade = [&](float factor, float alpha = 1.0f)
+	{
+		return ImVec4((std::min)(primary.x * factor, 1.0f), (std::min)(primary.y * factor, 1.0f), (std::min)(primary.z * factor, 1.0f), alpha);
+	};
+	colors[ImGuiCol_TitleBg] = shade(0.7f);
+	colors[ImGuiCol_TitleBgActive] = shade(1.0f);
+	colors[ImGuiCol_TitleBgCollapsed] = shade(0.7f, 0.8f);
+	colors[ImGuiCol_Tab] = shade(0.7f);
+	colors[ImGuiCol_TableHeaderBg] = shade(0.8f);
+	colors[ImGuiCol_FrameBg] = shade(0.8f);
+	colors[ImGuiCol_FrameBgHovered] = shade(1.15f);
+	colors[ImGuiCol_FrameBgActive] = shade(1.4f);
+	colors[ImGuiCol_ScrollbarGrab] = shade(1.0f);
+	colors[ImGuiCol_ScrollbarGrabHovered] = shade(1.25f);
+	colors[ImGuiCol_ScrollbarGrabActive] = shade(1.5f);
+}
+
+static void ApplyAppearance()
+{
+	Appearance& look = g_Appearance;
+	look.theme = std::clamp(look.theme, 0, 3);
+	look.opacity = std::clamp(look.opacity, 0.3f, 1.0f);
+	look.scale = std::clamp(look.scale, 0.75f, 2.0f);
+
+	ImGuiStyle& style = ImGui::GetStyle();
+	style = ImGuiStyle();
+	style.TabRounding = 0;
+	if (look.theme == 1) ImGui::StyleColorsLight();
+	else if (look.theme == 2) ImGui::StyleColorsClassic();
+	else ImGui::StyleColorsDark();
+
+	ImVec4* colors = style.Colors;
+	if (look.theme == 3)
+	{
+		// The game's panels: near-black brown with dull gold edges.
+		style.WindowRounding = 0;
+		style.FrameRounding = 0;
+		style.WindowBorderSize = 2;
+		colors[ImGuiCol_WindowBg] = { 0.07f, 0.06f, 0.05f, 1.0f };
+		colors[ImGuiCol_PopupBg] = { 0.09f, 0.08f, 0.07f, 1.0f };
+		colors[ImGuiCol_ChildBg] = { 0.05f, 0.045f, 0.04f, 1.0f };
+		colors[ImGuiCol_Border] = { 0.36f, 0.32f, 0.24f, 1.0f };
+		colors[ImGuiCol_Separator] = { 0.36f, 0.32f, 0.24f, 1.0f };
+		colors[ImGuiCol_FrameBg] = { 0.15f, 0.13f, 0.11f, 1.0f };
+		colors[ImGuiCol_TitleBg] = { 0.10f, 0.09f, 0.07f, 1.0f };
+		colors[ImGuiCol_TitleBgCollapsed] = { 0.10f, 0.09f, 0.07f, 0.8f };
+		colors[ImGuiCol_TableHeaderBg] = { 0.14f, 0.12f, 0.10f, 1.0f };
+		colors[ImGuiCol_TableRowBgAlt] = { 1.0f, 0.95f, 0.8f, 0.04f };
+		colors[ImGuiCol_Text] = { 0.92f, 0.89f, 0.80f, 1.0f };
+		colors[ImGuiCol_TextDisabled] = { 0.54f, 0.52f, 0.46f, 1.0f };
+		SetAccent({ 0.78f, 0.62f, 0.25f, 1.0f });
+	}
+	if (look.custom_accent)
+		SetAccent({ look.accent[0], look.accent[1], look.accent[2], 1.0f });
+	if (look.custom_primary)
+		SetPrimary({ look.primary[0], look.primary[1], look.primary[2], 1.0f });
+
+	colors[ImGuiCol_WindowBg].w = look.opacity;
+	colors[ImGuiCol_PopupBg].w = (std::max)(look.opacity, 0.9f);
+	ImGui::GetIO().FontGlobalScale = look.scale;
+}
+
+static bool DrawRunSettings()
 {
 	bool changed = false;
-	ImGui::SeparatorText("Limits");
+	ImGui::SeparatorText("Runs");
 	ImGui::SetNextItemWidth(110);
-	changed |= ImGui::InputInt("Max reforges per run", &g_MaxAttempts);
-	ImGui::SetNextItemWidth(110);
-	changed |= ImGui::InputInt("Keep at least this many of each material", &g_MinStock);
+	changed |= ImGui::InputInt("Max steps per run", &g_MaxAttempts);
+
+	// One reserve per material the current targets can spend.
+	bool needed[MATERIAL_COUNT] = {};
+	for (const Recipe& recipe : g_Recipes)
+	{
+		bool reroll = recipe.type == 0 || recipe.type == 1;
+		if (!reroll && !(recipe.type == 3 && g_AutoLock))
+			continue;
+		bool relevant = g_Targets.empty() && reroll;
+		for (const Target& target : g_Targets)
+			if (!recipe.tier.empty() && std::tolower(static_cast<unsigned char>(target.tier[0])) == recipe.tier[0]) relevant = true;
+		if (!relevant)
+			continue;
+		for (const auto& [id, count] : ParseCost(recipe.materials))
+			needed[id] = true;
+	}
+	bool any = false;
+	for (int id = 0; id < MATERIAL_COUNT; id++)
+	{
+		if (!needed[id])
+			continue;
+		if (!any)
+			ImGui::TextUnformatted("Keep at least:");
+		any = true;
+		ImGui::PushID(id);
+		ImGui::SetNextItemWidth(110);
+		changed |= ImGui::InputInt(MaterialName(id), &g_MinStock[id]);
+		ImGui::SameLine();
+		ImGui::TextDisabled("have %.0f", g_Stock[id]);
+		ImGui::PopID();
+		g_MinStock[id] = (std::max)(g_MinStock[id], 0);
+	}
 	changed |= ImGui::Checkbox("Allow rerolling pure stats", &g_AllowPureLoss);
 	changed |= ImGui::Checkbox("Lock stats as they reach their target", &g_AutoLock);
 	g_MaxAttempts = (std::max)(g_MaxAttempts, 1);
-	g_MinStock = (std::max)(g_MinStock, 0);
 	return changed;
+}
+
+static bool DrawOptions()
+{
+	bool changed = false;
+	ImGui::SeparatorText("Appearance");
+	bool restyle = false;
+	ImGui::SetNextItemWidth(160);
+	restyle |= ImGui::Combo("Theme", &g_Appearance.theme, THEME_NAMES, 4);
+	restyle |= ImGui::Checkbox("Custom accent", &g_Appearance.custom_accent);
+	if (g_Appearance.custom_accent)
+	{
+		ImGui::SameLine();
+		restyle |= ImGui::ColorEdit3("##accent", g_Appearance.accent, ImGuiColorEditFlags_NoInputs);
+	}
+	restyle |= ImGui::Checkbox("Custom primary", &g_Appearance.custom_primary);
+	if (g_Appearance.custom_primary)
+	{
+		ImGui::SameLine();
+		restyle |= ImGui::ColorEdit3("##primary", g_Appearance.primary, ImGuiColorEditFlags_NoInputs);
+	}
+	ImGui::SetNextItemWidth(160);
+	restyle |= ImGui::SliderFloat("Opacity", &g_Appearance.opacity, 0.3f, 1.0f, "%.2f");
+	ImGui::SetNextItemWidth(160);
+	// Applied on release: resizing the text under the cursor makes the slider jump.
+	static float scale = 0;
+	if (!ImGui::IsAnyItemActive() || scale == 0)
+		scale = g_Appearance.scale;
+	ImGui::SliderFloat("Text size", &scale, 0.75f, 2.0f, "%.2f");
+	if (ImGui::IsItemDeactivatedAfterEdit())
+	{
+		g_Appearance.scale = scale;
+		restyle = true;
+	}
+	changed |= ImGui::Checkbox("Show recipes and stock", &g_Appearance.show_costs);
+	if (ImGui::Button("Reset appearance"))
+	{
+		int hotkey = g_Appearance.hotkey;
+		g_Appearance = Appearance();
+		g_Appearance.hotkey = hotkey;
+		scale = 0;
+		restyle = true;
+	}
+	if (restyle)
+		ApplyAppearance();
+
+	ImGui::SeparatorText("Hotkey");
+	static bool capturing = false;
+	// A key held when capture starts must be released first, or it would be taken at once.
+	static bool armed = false;
+	if (capturing)
+	{
+		g_SuppressToggle = true;
+		ImGui::Button("Press a key (Esc cancels)", { 220, 0 });
+		int key = PressedKey();
+		if (!armed)
+			armed = key == 0;
+		else if (key == VK_ESCAPE)
+			capturing = false;
+		else if (key)
+		{
+			g_Appearance.hotkey = key;
+			capturing = false;
+			changed = true;
+		}
+	}
+	else
+	{
+		if (ImGui::Button(KeyName(g_Appearance.hotkey).c_str(), { 220, 0 }))
+		{
+			capturing = true;
+			armed = false;
+		}
+		ImGui::SameLine();
+		ImGui::TextUnformatted("shows or hides the overlay");
+	}
+
+	ImGui::SeparatorText("About");
+	ImGui::TextUnformatted("SlormReforger v" SLORMREFORGER_VERSION " by Crash");
+	return changed || restyle;
 }
 
 static void DrawCosts()
@@ -314,25 +559,8 @@ static void DrawCosts()
 	ImGui::Text("Goldus: %.0f", g_Gold);
 }
 
-static void DrawWindow()
+static void DrawRun()
 {
-	std::lock_guard guard(g_Lock);
-	ImGui::SetNextWindowPos({ 40, 40 }, ImGuiCond_FirstUseEver);
-	if (!ImGui::Begin("SlormReforger (F6 hides)", &g_Visible, ImGuiWindowFlags_AlwaysAutoResize))
-	{
-		ImGui::End();
-		return;
-	}
-
-	bool changed = false;
-	ImGui::BeginDisabled(g_Running);
-	changed |= DrawItem();
-	changed |= DrawTargets();
-	changed |= DrawSettings();
-	ImGui::EndDisabled();
-	if (g_HasItem)
-		DrawCosts();
-
 	ImGui::Separator();
 	if (g_Running)
 	{
@@ -351,7 +579,7 @@ static void DrawWindow()
 		ImGui::TextUnformatted(g_Status.c_str());
 	}
 
-	if (!g_Notes.empty() && ImGui::BeginChild("notes", { 0, 110 }, ImGuiChildFlags_Borders))
+	if (!g_Notes.empty() && ImGui::BeginChild("notes", { 0, 110 * g_Appearance.scale }, ImGuiChildFlags_Borders))
 	{
 		for (const std::string& note : g_Notes)
 			ImGui::TextUnformatted(note.c_str());
@@ -360,6 +588,41 @@ static void DrawWindow()
 	}
 	if (!g_Notes.empty())
 		ImGui::EndChild();
+}
+
+static void DrawWindow()
+{
+	std::lock_guard guard(g_Lock);
+	ImGui::SetNextWindowPos({ 40, 40 }, ImGuiCond_FirstUseEver);
+	// The id after ### keeps the saved position when the title changes.
+	if (!ImGui::Begin("SlormReforger v" SLORMREFORGER_VERSION "###SlormReforger", &g_Visible, ImGuiWindowFlags_AlwaysAutoResize))
+	{
+		ImGui::End();
+		return;
+	}
+
+	bool changed = false;
+	if (ImGui::BeginTabBar("tabs"))
+	{
+		if (ImGui::BeginTabItem("Reforge"))
+		{
+			ImGui::BeginDisabled(g_Running);
+			changed |= DrawItem();
+			changed |= DrawTargets();
+			changed |= DrawRunSettings();
+			ImGui::EndDisabled();
+			if (g_HasItem && g_Appearance.show_costs)
+				DrawCosts();
+			DrawRun();
+			ImGui::EndTabItem();
+		}
+		if (ImGui::BeginTabItem("Options"))
+		{
+			changed |= DrawOptions();
+			ImGui::EndTabItem();
+		}
+		ImGui::EndTabBar();
+	}
 
 	ImGui::End();
 	if (changed)
@@ -381,7 +644,7 @@ static void Frame(IDXGISwapChain* swapchain, UINT flags)
 		ImGui::CreateContext();
 		ImGuiIO& io = ImGui::GetIO();
 		io.IniFilename = g_IniPath.empty() ? nullptr : g_IniPath.c_str();
-		ImGui::StyleColorsDark();
+		ApplyAppearance();
 		g_Window = description.OutputWindow;
 		ImGui_ImplWin32_Init(g_Window);
 		g_OriginalProc = reinterpret_cast<WNDPROC>(SetWindowLongPtrW(g_Window, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(WindowProc)));

@@ -1,4 +1,5 @@
 #include "Reforger.hpp"
+#include "Version.hpp"
 #include <algorithm>
 #include <cstdarg>
 #include <fstream>
@@ -21,8 +22,10 @@ std::recursive_mutex g_Lock;
 std::vector<Target> g_Targets;
 int g_MaxAttempts = 50;
 bool g_AllowPureLoss = false;
-int g_MinStock = 0;
+int g_MinStock[MATERIAL_COUNT] = {};
 bool g_AutoLock = false;
+Appearance g_Appearance;
+bool g_SuppressToggle = false;
 
 bool g_Visible = true;
 bool g_Running = false;
@@ -212,8 +215,9 @@ static void LoadConfig()
 	g_Targets.clear();
 	g_MaxAttempts = 50;
 	g_AllowPureLoss = false;
-	g_MinStock = 0;
+	std::fill(std::begin(g_MinStock), std::end(g_MinStock), 0);
 	g_AutoLock = false;
+	g_Appearance = Appearance();
 
 	std::ifstream file(g_ConfigPath);
 	if (!file)
@@ -227,8 +231,23 @@ static void LoadConfig()
 		if (!(words >> first) || first[0] == '#')
 			continue;
 		if (first == "max_attempts") { words >> g_MaxAttempts; continue; }
-		if (first == "min_stock") { words >> g_MinStock; continue; }
+		// "min_stock N" from older configs applies to every material; "min_stock ID N" to one.
+		if (first == "min_stock")
+		{
+			int a = 0, b = 0;
+			words >> a;
+			if (words >> b) { if (a >= 0 && a < MATERIAL_COUNT) g_MinStock[a] = b; }
+			else std::fill(std::begin(g_MinStock), std::end(g_MinStock), a);
+			continue;
+		}
 		if (first == "auto_lock") { int flag = 0; words >> flag; g_AutoLock = flag != 0; continue; }
+		if (first == "theme") { words >> g_Appearance.theme; continue; }
+		if (first == "accent") { int on = 0; words >> on >> g_Appearance.accent[0] >> g_Appearance.accent[1] >> g_Appearance.accent[2]; g_Appearance.custom_accent = on != 0; continue; }
+		if (first == "primary") { int on = 0; words >> on >> g_Appearance.primary[0] >> g_Appearance.primary[1] >> g_Appearance.primary[2]; g_Appearance.custom_primary = on != 0; continue; }
+		if (first == "opacity") { words >> g_Appearance.opacity; continue; }
+		if (first == "scale") { words >> g_Appearance.scale; continue; }
+		if (first == "hotkey") { words >> g_Appearance.hotkey; if (g_Appearance.hotkey < 8 || g_Appearance.hotkey > 254) g_Appearance.hotkey = VK_F6; continue; }
+		if (first == "show_costs") { int flag = 1; words >> flag; g_Appearance.show_costs = flag != 0; continue; }
 		if (first == "allow_pure_loss") { int flag = 0; words >> flag; g_AllowPureLoss = flag != 0; continue; }
 		Target target;
 		target.tier = first;
@@ -266,10 +285,18 @@ void SaveConfig()
 		}
 		file << '\n';
 	}
+	for (int id = 0; id < MATERIAL_COUNT; id++)
+		if (g_MinStock[id] > 0) file << "min_stock " << id << ' ' << g_MinStock[id] << '\n';
 	file << "max_attempts " << g_MaxAttempts << '\n'
-		<< "min_stock " << g_MinStock << '\n'
 		<< "allow_pure_loss " << (g_AllowPureLoss ? 1 : 0) << '\n'
-		<< "auto_lock " << (g_AutoLock ? 1 : 0) << '\n';
+		<< "auto_lock " << (g_AutoLock ? 1 : 0) << '\n'
+		<< "theme " << g_Appearance.theme << '\n'
+		<< "accent " << (g_Appearance.custom_accent ? 1 : 0) << ' ' << g_Appearance.accent[0] << ' ' << g_Appearance.accent[1] << ' ' << g_Appearance.accent[2] << '\n'
+		<< "primary " << (g_Appearance.custom_primary ? 1 : 0) << ' ' << g_Appearance.primary[0] << ' ' << g_Appearance.primary[1] << ' ' << g_Appearance.primary[2] << '\n'
+		<< "opacity " << g_Appearance.opacity << '\n'
+		<< "scale " << g_Appearance.scale << '\n'
+		<< "show_costs " << (g_Appearance.show_costs ? 1 : 0) << '\n'
+		<< "hotkey " << g_Appearance.hotkey << '\n';
 }
 
 // Best roll for a tier. Percent stats scale down on low-level items.
@@ -475,9 +502,9 @@ static bool CanAfford(CInstance* Self, CInstance* Other, int Recipe, std::string
 	for (const auto& [id, count] : cost)
 	{
 		double stock = MaterialStock(Self, Other, id);
-		if (stock - count < g_MinStock)
+		if (stock - count < g_MinStock[id])
 		{
-			Why = std::string("not enough ") + MaterialName(id) + " (have " + std::to_string(static_cast<long long>(stock)) + ", keeping " + std::to_string(g_MinStock) + ")";
+			Why = std::string("not enough ") + MaterialName(id) + " (have " + std::to_string(static_cast<long long>(stock)) + ", keeping " + std::to_string(g_MinStock[id]) + ")";
 			return false;
 		}
 	}
@@ -631,8 +658,15 @@ static void Tick(CInstance* Self, CInstance* Other)
 {
 	std::lock_guard guard(g_Lock);
 
-	bool key_down = (GetAsyncKeyState(VK_F6) & 0x8000) != 0;
-	if (key_down && !g_KeyWasDown && GetForegroundWindow() == GetActiveWindow())
+	bool key_down = (GetAsyncKeyState(g_Appearance.hotkey) & 0x8000) != 0;
+	if (g_SuppressToggle)
+	{
+		// Wait for the newly bound key to be released.
+		if (!key_down)
+			g_SuppressToggle = false;
+		key_down = true;
+	}
+	else if (key_down && !g_KeyWasDown && GetForegroundWindow() == GetActiveWindow())
 	{
 		g_Visible = !g_Visible;
 		Log("overlay %s", g_Visible ? "shown" : "hidden");
@@ -867,6 +901,6 @@ EXPORTED AurieStatus ModuleInitialize(
 	}
 
 
-	Log("loaded, %d stats, F6 shows/hides the overlay, config %s", static_cast<int>(g_Stats.size()), g_ConfigPath.string().c_str());
+	Log("v" SLORMREFORGER_VERSION " loaded, %d stats, key %d shows/hides the overlay, config %s", static_cast<int>(g_Stats.size()), g_Appearance.hotkey, g_ConfigPath.string().c_str());
 	return AURIE_SUCCESS;
 }
