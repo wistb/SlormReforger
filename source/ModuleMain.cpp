@@ -329,7 +329,7 @@ int TargetState(const Target& Target, std::string& Text)
 		}
 		if (match->locked)
 		{
-			Text = "locked, its roll cannot change";
+			Text = "locked";
 			return 2;
 		}
 		snprintf(text, sizeof(text), "roll %g of %g", match->roll, MaxRoll(Target.tier, Target.stat));
@@ -338,31 +338,31 @@ int TargetState(const Target& Target, std::string& Text)
 	}
 	if (elsewhere)
 	{
-		Text = std::string("already on the item as a ") + TierName(elsewhere->tier) + " stat";
+		Text = std::string("already a ") + TierName(elsewhere->tier) + " stat";
 		return 2;
 	}
 	auto pool = g_Pools.find(Target.tier);
 	if (pool != g_Pools.end() && !pool->second.empty() && !FindInPool(Target.tier, Target.stat))
 	{
-		Text = std::string("cannot roll as a ") + TierName(Target.tier) + " stat on this item";
+		Text = std::string("not a possible ") + TierName(Target.tier) + " stat";
 		return 2;
 	}
 	if (in_tier == 0)
 	{
-		Text = std::string("the item has no ") + TierName(Target.tier) + " stat to reroll";
+		Text = std::string("no ") + TierName(Target.tier) + " stat on item";
 		return 2;
 	}
 	if (unlocked == 0)
 	{
-		Text = std::string("every ") + TierName(Target.tier) + " stat is locked";
+		Text = std::string("all ") + TierName(Target.tier) + " stats locked";
 		return 2;
 	}
 	int possible = 0;
 	if (pool != g_Pools.end())
 		for (const PoolEntry& entry : pool->second) possible += entry.on_item ? 0 : 1;
-	Text = "not on the item yet";
+	Text = "not on item yet";
 	if (possible > 0)
-		Text += ", one of " + std::to_string(possible) + " stats the reroll can give";
+		Text += ", 1 of " + std::to_string(possible) + " possible";
 	return 1;
 }
 
