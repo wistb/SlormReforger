@@ -329,6 +329,15 @@ static bool DrawTargets()
 	bool changed = false;
 	ImGui::SeparatorText("Targets");
 	changed |= DrawImportPreset();
+	if (!g_Targets.empty())
+	{
+		if (g_ActivePreset >= 0 && g_ActivePreset < static_cast<int>(g_Presets.size()) && g_HasItem) ImGui::SameLine();
+		if (ImGui::Button("Clear"))
+		{
+			g_Targets.clear();
+			changed = true;
+		}
+	}
 	if (g_Targets.empty())
 		ImGui::TextDisabled("None. Start will max the Reforge Scores recipe selected in the game.");
 
