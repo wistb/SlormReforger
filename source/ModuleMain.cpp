@@ -22,6 +22,7 @@ std::vector<Target> g_Targets;
 int g_MaxAttempts = 50;
 bool g_AllowPureLoss = false;
 int g_MinStock = 0;
+bool g_AutoLock = false;
 
 bool g_Visible = true;
 bool g_Running = false;
@@ -107,6 +108,7 @@ static bool ReadItem(const RValue& Item, std::vector<Affix>& Out)
 		affix.roll = ToNumber(fields[2]);
 		affix.locked = ToNumber(fields[3]) != 0;
 		affix.pure = ToNumber(fields[4]);
+		affix.index = static_cast<int>(i);
 		Out.push_back(affix);
 	}
 	return true;
@@ -211,6 +213,7 @@ static void LoadConfig()
 	g_MaxAttempts = 50;
 	g_AllowPureLoss = false;
 	g_MinStock = 0;
+	g_AutoLock = false;
 
 	std::ifstream file(g_ConfigPath);
 	if (!file)
@@ -225,6 +228,7 @@ static void LoadConfig()
 			continue;
 		if (first == "max_attempts") { words >> g_MaxAttempts; continue; }
 		if (first == "min_stock") { words >> g_MinStock; continue; }
+		if (first == "auto_lock") { int flag = 0; words >> flag; g_AutoLock = flag != 0; continue; }
 		if (first == "allow_pure_loss") { int flag = 0; words >> flag; g_AllowPureLoss = flag != 0; continue; }
 		Target target;
 		target.tier = first;
@@ -264,7 +268,8 @@ void SaveConfig()
 	}
 	file << "max_attempts " << g_MaxAttempts << '\n'
 		<< "min_stock " << g_MinStock << '\n'
-		<< "allow_pure_loss " << (g_AllowPureLoss ? 1 : 0) << '\n';
+		<< "allow_pure_loss " << (g_AllowPureLoss ? 1 : 0) << '\n'
+		<< "auto_lock " << (g_AutoLock ? 1 : 0) << '\n';
 }
 
 // Best roll for a tier. Percent stats scale down on low-level items.
@@ -329,8 +334,8 @@ int TargetState(const Target& Target, std::string& Text)
 		}
 		if (match->locked)
 		{
-			Text = "locked";
-			return 2;
+			Text = g_AutoLock ? "locked, will unlock" : "locked";
+			return g_AutoLock ? 1 : 2;
 		}
 		snprintf(text, sizeof(text), "roll %g of %g", match->roll, MaxRoll(Target.tier, Target.stat));
 		Text = text;
@@ -366,9 +371,15 @@ int TargetState(const Target& Target, std::string& Text)
 	return 1;
 }
 
+static double g_GoldAtStart = 0;
+// Lock or unlock applied last step, checked on the next.
+static std::string g_LockTier, g_LockStat;
+static bool g_LockWanted = false;
+
 static void Stop(const char* Reason)
 {
-	Note("stopped after %d reforges: %s", g_Attempts, Reason);
+	double gold = ToNumber(g_Yytk->CallBuiltin("variable_global_get", { RValue("gold") }));
+	Note("stopped after %d steps, %.0f goldus spent: %s", g_Attempts, g_GoldAtStart - gold, Reason);
 	g_Status = Reason;
 	g_Running = false;
 }
@@ -419,7 +430,29 @@ static double MaterialStock(CInstance* Self, CInstance* Other, int Id)
 	return ToNumber(count);
 }
 
-// Recipe materials are ids joined by '|', one of each; the fifth field is the goldus cost.
+// Cost spec: parts joined by '|', each "material" (one) or "material*count".
+std::vector<std::pair<int, int>> ParseCost(const std::string& Spec)
+{
+	std::vector<std::pair<int, int>> parts;
+	std::istringstream stream(Spec);
+	std::string part;
+	while (std::getline(stream, part, '|'))
+	{
+		try
+		{
+			size_t star = part.find('*');
+			int id = std::stoi(part.substr(0, star));
+			int count = star == std::string::npos ? 1 : std::stoi(part.substr(star + 1));
+			if (id < 0 || id >= MATERIAL_COUNT || count < 1)
+				return {};
+			parts.emplace_back(id, count);
+		}
+		catch (...) { return {}; }
+	}
+	return parts;
+}
+
+// The goldus field is only accurate for the recipe selected in the game's panel, so it is a weak check.
 static bool CanAfford(CInstance* Self, CInstance* Other, int Recipe, std::string& Why)
 {
 	RValue recipes = g_Yytk->CallBuiltin("variable_instance_get", { RValue(Self), RValue("blacksmith_recipes") });
@@ -433,36 +466,63 @@ static bool CanAfford(CInstance* Self, CInstance* Other, int Recipe, std::string
 		return false;
 
 	std::string materials = fields[3].ToString();
-	if (materials.find('*') != std::string::npos)
+	std::vector<std::pair<int, int>> cost = ParseCost(materials);
+	if (cost.empty())
 	{
 		Why = "recipe cost format not understood: " + materials;
 		return false;
 	}
-
-	std::istringstream ids(materials);
-	std::string id_text;
-	while (std::getline(ids, id_text, '|'))
+	for (const auto& [id, count] : cost)
 	{
-		int id = 0;
-		try { id = std::stoi(id_text); }
-		catch (...) { Why = "recipe cost format not understood: " + materials; return false; }
-
 		double stock = MaterialStock(Self, Other, id);
-		if (stock - 1 < g_MinStock)
+		if (stock - count < g_MinStock)
 		{
 			Why = std::string("not enough ") + MaterialName(id) + " (have " + std::to_string(static_cast<long long>(stock)) + ", keeping " + std::to_string(g_MinStock) + ")";
 			return false;
 		}
 	}
 
-	double cost = ToNumber(fields[4]);
 	double gold = ToNumber(g_Yytk->CallBuiltin("variable_global_get", { RValue("gold") }));
-	if (gold < cost)
+	if (gold < ToNumber(fields[4]))
 	{
 		Why = "not enough goldus";
 		return false;
 	}
 	return true;
+}
+
+// Lock and unlock share one recipe per stat: type 3, with the tier code, a label ending in the
+// stat's name, and the stat's position as seventh field. Position alone is not trusted.
+static int FindLockRecipe(CInstance* Ui, const Affix& Affix, bool Unlock, double& Position)
+{
+	RValue recipes = g_Yytk->CallBuiltin("variable_instance_get", { RValue(Ui), RValue("blacksmith_recipes") });
+	const StatInfo* stat = FindStat(Affix.stat);
+	if (!recipes.IsArray() || !stat)
+		return -1;
+
+	std::string ending = " " + stat->label + "}";
+	std::string code(1, static_cast<char>(std::tolower(Affix.tier[0])));
+	int found = -1;
+	std::vector<RValue> list = recipes.ToVector();
+	for (size_t i = 0; i < list.size(); i++)
+	{
+		if (!list[i].IsArray())
+			continue;
+		std::vector<RValue> fields = list[i].ToVector();
+		if (fields.size() < 7 || static_cast<int>(ToNumber(fields[2])) != 3 || fields[5].ToString() != code)
+			continue;
+		std::string detail = fields[1].ToString();
+		if (detail.size() < ending.size() || detail.compare(detail.size() - ending.size(), ending.size(), ending) != 0)
+			continue;
+		if ((fields[0].ToString().rfind("Unlock", 0) == 0) != Unlock)
+			continue;
+		// Two matches would mean the label is ambiguous; refuse.
+		if (found >= 0)
+			return -1;
+		found = static_cast<int>(i);
+		Position = ToNumber(fields[6]);
+	}
+	return found;
 }
 
 // No targets set: take the scores recipe selected in the panel and aim every stat it rerolls at max.
@@ -532,6 +592,7 @@ static void Refresh(CInstance* Self, CInstance* Other)
 				continue;
 			Recipe recipe;
 			recipe.label = fields[0].ToString();
+			recipe.detail = fields[1].ToString();
 			recipe.type = static_cast<int>(ToNumber(fields[2]));
 			recipe.materials = fields[3].ToString();
 			recipe.gold = ToNumber(fields[4]);
@@ -541,20 +602,10 @@ static void Refresh(CInstance* Self, CInstance* Other)
 		}
 	}
 
-	// Only ask about materials the reforge recipes use.
+	// Only ask about materials the listed recipes use.
 	for (const Recipe& recipe : g_Recipes)
-	{
-		if (recipe.type != 0 && recipe.type != 1)
-			continue;
-		std::istringstream ids(recipe.materials);
-		std::string id_text;
-		while (std::getline(ids, id_text, '|'))
-		{
-			int id = atoi(id_text.c_str());
-			if (id_text.find_first_not_of("0123456789") == std::string::npos && !id_text.empty() && id < MATERIAL_COUNT)
-				g_Stock[id] = MaterialStock(Self, Other, id);
-		}
-	}
+		for (const auto& [id, count] : ParseCost(recipe.materials))
+			g_Stock[id] = MaterialStock(Self, Other, id);
 	g_Gold = ToNumber(g_Yytk->CallBuiltin("variable_global_get", { RValue("gold") }));
 }
 
@@ -567,6 +618,8 @@ static void Start(CInstance* Self, CInstance* Other)
 		g_Status = "nothing to do";
 		return;
 	}
+	g_GoldAtStart = ToNumber(g_Yytk->CallBuiltin("variable_global_get", { RValue("gold") }));
+	g_LockStat.clear();
 	g_Running = true;
 	g_Attempts = 0;
 	g_Cooldown = 0;
@@ -613,13 +666,59 @@ static void Tick(CInstance* Self, CInstance* Other)
 		return Stop("no single item found in the reforge slot");
 
 	for (const Affix& affix : g_Item)
-		Log("  %s %s roll %g shown %g%s", affix.tier.c_str(), affix.stat.c_str(), affix.roll, affix.shown, affix.pure > 100 ? " pure" : "");
+		Log("  %s %s roll %g shown %g%s%s", affix.tier.c_str(), affix.stat.c_str(), affix.roll, affix.shown, affix.pure > 100 ? " pure" : "", affix.locked ? " locked" : "");
 
-	// First unmet target decides the next recipe.
+	// With auto-lock, every target stat is locked once it is met and unlocked while its roll
+	// still needs work. While a tier is missing a target stat, the target stats already there are held too.
+	int recipe = -1;
+	const Affix* lock_affix = nullptr;
+	bool unlock = false;
+	double lock_position = 0;
+
+	// A lock that did not take would otherwise be retried, and paid for, every step.
+	if (!g_LockStat.empty())
+	{
+		bool done = false;
+		for (const Affix& affix : g_Item)
+			if (affix.tier == g_LockTier && affix.stat == g_LockStat && affix.locked == g_LockWanted) done = true;
+		std::string stat = g_LockStat;
+		g_LockStat.clear();
+		if (!done)
+			return Stop((StatName(stat) + ": the " + (g_LockWanted ? "lock" : "unlock") + " did not take effect").c_str());
+	}
+	if (g_AutoLock && !g_AllScores)
+	{
+		for (const Affix& affix : g_Item)
+		{
+			if (lock_affix)
+				break;
+			const Target* own = nullptr;
+			bool missing = false;
+			for (const Target& target : g_RunTargets)
+			{
+				if (target.tier != affix.tier)
+					continue;
+				if (target.stat == affix.stat) own = &target;
+				bool present = false;
+				for (const Affix& other : g_Item)
+					if (other.tier == target.tier && other.stat == target.stat) present = true;
+				if (!present) missing = true;
+			}
+			if (own && (missing || Met(*own, affix)) != affix.locked)
+			{
+				lock_affix = &affix;
+				unlock = affix.locked;
+			}
+		}
+	}
+
+	// First unmet target decides the next reroll.
 	const Target* pending = nullptr;
 	int recipe_type = 0;
 	for (const Target& target : g_RunTargets)
 	{
+		if (lock_affix)
+			break;
 		const Affix* match = nullptr;
 		for (const Affix& affix : g_Item)
 			if (affix.tier == target.tier && affix.stat == target.stat) match = &affix;
@@ -633,21 +732,31 @@ static void Tick(CInstance* Self, CInstance* Other)
 		recipe_type = match ? 0 : 1;
 		break;
 	}
-	if (!pending)
+	if (!pending && !lock_affix)
 		return Stop("all targets met");
 	if (g_Attempts >= g_MaxAttempts)
 		return Stop("max_attempts reached");
 
-	// Both recipe types reroll every unlocked stat of the tier.
-	for (const Affix& affix : g_Item)
+	if (lock_affix)
 	{
-		if ((!g_AllScores && affix.tier != pending->tier) || affix.locked)
-			continue;
-		if (affix.pure > 100 && !g_AllowPureLoss)
-			return Stop("tier has a pure stat (allow rerolling pure stats to continue)");
+		recipe = FindLockRecipe(Self, *lock_affix, unlock, lock_position);
+		if (recipe < 0)
+			return Stop("lock recipe not offered for this stat");
 	}
 
-	int recipe = FindRecipe(Self, recipe_type, g_AllScores ? "" : pending->tier);
+	if (!lock_affix)
+	{
+		// Both reroll types hit every unlocked stat of the tier.
+		for (const Affix& affix : g_Item)
+		{
+			if ((!g_AllScores && affix.tier != pending->tier) || affix.locked)
+				continue;
+			if (affix.pure > 100 && !g_AllowPureLoss)
+				return Stop("tier has a pure stat (allow rerolling pure stats to continue)");
+		}
+		recipe = FindRecipe(Self, recipe_type, g_AllScores ? "" : pending->tier);
+	}
+
 	if (recipe < 0)
 		return Stop("recipe not offered for this item");
 
@@ -657,8 +766,19 @@ static void Tick(CInstance* Self, CInstance* Other)
 
 	g_Yytk->CallBuiltin("variable_instance_set", { RValue(Self), RValue("blacksmith_selected_recipe"), RValue(recipe) });
 
+	// For a lock or unlock the game passes the stat's position (the recipe's seventh field);
+	// a reroll takes no argument. A lock applied without it crashes the game.
 	RValue result;
-	g_Apply(Self, Other, result, 0, nullptr);
+	RValue argument(lock_position);
+	if (lock_affix)
+	{
+		g_LockTier = lock_affix->tier;
+		g_LockStat = lock_affix->stat;
+		g_LockWanted = !unlock;
+	}
+	RValue* arguments[1] = { &argument };
+	Log("applying recipe %d%s", recipe, lock_affix ? " (lock)" : "");
+	g_Apply(Self, Other, result, lock_affix ? 1 : 0, arguments);
 	g_Attempts++;
 	g_Cooldown = 3;
 
@@ -666,7 +786,10 @@ static void Tick(CInstance* Self, CInstance* Other)
 	if (!applied.IsArray())
 		return Stop("the game did not apply the recipe");
 
-	Note("reforge %d: %s %s for %s", g_Attempts, pending->tier.c_str(), recipe_type ? "stats" : "scores", StatName(pending->stat).c_str());
+	if (lock_affix)
+		Note("%d: %s %s", g_Attempts, unlock ? "unlock" : "lock", StatName(lock_affix->stat).c_str());
+	else
+		Note("%d: reroll %s %s for %s", g_Attempts, TierName(pending->tier), recipe_type ? "stats" : "scores", StatName(pending->stat).c_str());
 }
 
 // Runs once per frame, after the UI object's Step event.

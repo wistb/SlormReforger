@@ -13,6 +13,8 @@ struct Affix
 	double roll = 0;
 	bool locked = false;
 	double pure = 0;
+	// Position in the item array; lock recipes refer to it.
+	int index = 0;
 	// Displayed value, as the game computes it.
 	double shown = 0;
 	bool has_shown = false;
@@ -31,6 +33,7 @@ struct Target
 struct Recipe
 {
 	std::string label;
+	std::string detail;
 	int type = 0;
 	std::string materials;
 	double gold = 0;
@@ -41,7 +44,9 @@ struct Recipe
 struct StatInfo
 {
 	std::string ref;
+	// name is label plus " %" for percent stats; label is the game's own text.
 	std::string name;
+	std::string label;
 	std::map<std::string, std::string> columns;
 };
 
@@ -63,6 +68,7 @@ extern std::vector<Target> g_Targets;
 extern int g_MaxAttempts;
 extern bool g_AllowPureLoss;
 extern int g_MinStock;
+extern bool g_AutoLock;
 
 extern bool g_Visible;
 extern bool g_Running;
@@ -87,6 +93,7 @@ const PoolEntry* FindInPool(const std::string& Tier, const std::string& Stat);
 double MaxRoll(const std::string& Tier, const std::string& Stat);
 const char* MaterialName(int Id);
 void SaveConfig();
+std::vector<std::pair<int, int>> ParseCost(const std::string& Spec);
 int TargetState(const Target& Target, std::string& Text);
 const char* TierName(const std::string& Code);
 

@@ -164,6 +164,7 @@ void LoadGameData()
 			continue;
 		auto name = names.find(stat.ref);
 		stat.name = name != names.end() ? name->second : stat.ref;
+		stat.label = stat.name;
 		if (row["PERCENT"] == "%")
 			stat.name += " %";
 		stat.columns = std::move(row);

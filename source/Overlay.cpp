@@ -275,6 +275,7 @@ static bool DrawSettings()
 	ImGui::SetNextItemWidth(110);
 	changed |= ImGui::InputInt("Keep at least this many of each material", &g_MinStock);
 	changed |= ImGui::Checkbox("Allow rerolling pure stats", &g_AllowPureLoss);
+	changed |= ImGui::Checkbox("Lock stats as they reach their target", &g_AutoLock);
 	g_MaxAttempts = (std::max)(g_MaxAttempts, 1);
 	g_MinStock = (std::max)(g_MinStock, 0);
 	return changed;
@@ -284,35 +285,26 @@ static void DrawCosts()
 {
 	ImGui::SeparatorText("Recipes and stock");
 	bool used[MATERIAL_COUNT] = {};
-	if (ImGui::BeginTable("recipes", 3, ImGuiTableFlags_SizingFixedFit))
+	if (ImGui::BeginTable("recipes", 2, ImGuiTableFlags_SizingFixedFit))
 	{
 		for (const Recipe& recipe : g_Recipes)
 		{
-			if (recipe.type != 0 && recipe.type != 1)
+			// Reforge, lock and unlock; the mod does not apply the others.
+			if (recipe.type != 0 && recipe.type != 1 && recipe.type != 3)
 				continue;
 			std::string cost;
-			size_t start = 0;
-			while (start <= recipe.materials.size())
+			for (const auto& [id, count] : ParseCost(recipe.materials))
 			{
-				size_t end = recipe.materials.find('|', start);
-				std::string id_text = recipe.materials.substr(start, end == std::string::npos ? std::string::npos : end - start);
-				int id = atoi(id_text.c_str());
-				if (!id_text.empty() && id_text.find_first_not_of("0123456789") == std::string::npos && id < MATERIAL_COUNT)
-				{
-					used[id] = true;
-					cost += std::string(cost.empty() ? "" : " + ") + MaterialName(id);
-				}
-				if (end == std::string::npos)
-					break;
-				start = end + 1;
+				used[id] = true;
+				cost += std::string(cost.empty() ? "" : " + ") + (count > 1 ? std::to_string(count) + " x " : "") + MaterialName(id);
 			}
+			std::string name = recipe.type == 3 ? recipe.detail : recipe.label;
+			name.erase(std::remove_if(name.begin(), name.end(), [](char c) { return c == '{' || c == '}'; }), name.end());
 			ImGui::TableNextRow();
 			ImGui::TableNextColumn();
-			ImGui::TextUnformatted(recipe.label.c_str());
+			ImGui::TextUnformatted(name.c_str());
 			ImGui::TableNextColumn();
 			ImGui::TextUnformatted(cost.c_str());
-			ImGui::TableNextColumn();
-			ImGui::Text("%g goldus", recipe.gold);
 		}
 		ImGui::EndTable();
 	}
@@ -347,7 +339,7 @@ static void DrawWindow()
 		if (ImGui::Button("Stop", { 120, 0 }))
 			g_WantStop = true;
 		ImGui::SameLine();
-		ImGui::Text("running, %d / %d reforges", g_Attempts, g_MaxAttempts);
+		ImGui::Text("running, %d / %d steps", g_Attempts, g_MaxAttempts);
 	}
 	else
 	{
