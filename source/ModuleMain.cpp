@@ -33,10 +33,12 @@ static fs::path g_ConfigPath;
 
 static PFUNC_YYGMLScript g_StatFromScore = nullptr;
 static PFUNC_YYGMLScript g_Apply = nullptr;
+static PFUNC_YYGMLScript g_CurrencySpend = nullptr;
 
 static std::vector<Target> g_Targets;
 static int g_MaxAttempts = 50;
 static bool g_AllowPureLoss = false;
+static int g_MinStock = 0;
 
 static bool g_Running = false;
 static bool g_KeyWasDown = false;
@@ -156,6 +158,7 @@ static void LoadConfig()
 	g_Targets.clear();
 	g_MaxAttempts = 50;
 	g_AllowPureLoss = false;
+	g_MinStock = 0;
 
 	std::ifstream file(g_ConfigPath);
 	if (!file)
@@ -167,6 +170,8 @@ static void LoadConfig()
 			"# D dodge_add max\n"
 			"# D dodge_add 1500\n"
 			"max_attempts 50\n"
+			"# Stop before any material would drop below this count.\n"
+			"min_stock 0\n"
 			"allow_pure_loss 0\n";
 		return;
 	}
@@ -179,6 +184,7 @@ static void LoadConfig()
 		if (!(words >> first) || first[0] == '#')
 			continue;
 		if (first == "max_attempts") { words >> g_MaxAttempts; continue; }
+		if (first == "min_stock") { words >> g_MinStock; continue; }
 		if (first == "allow_pure_loss") { int flag = 0; words >> flag; g_AllowPureLoss = flag != 0; continue; }
 		Target target;
 		target.tier = first;
@@ -249,44 +255,70 @@ static int FindRecipe(CInstance* Ui, int Type, const std::string& Tier)
 	return -1;
 }
 
-// Temporary: find where material counts are kept.
-static void LogStockCandidates()
+static const char* MaterialName(int Id)
 {
-	CInstance* global_instance = nullptr;
-	if (!AurieSuccess(g_Yytk->GetGlobalInstance(&global_instance)))
-		return;
-	g_Yytk->EnumInstanceMembers(RValue(global_instance), [](const char* Name, RValue* Value) -> bool
-	{
-		std::string name = Name;
-		bool wanted = name.find("slorm") != std::string::npos || name.find("invent") != std::string::npos
-			|| name.find("shared") != std::string::npos || name.find("gold") != std::string::npos;
-		if (!wanted || !Value)
-			return false;
-		std::string text;
-		if (Value->IsArray())
-		{
-			std::vector<RValue> items = Value->ToVector();
-			text = "array[" + std::to_string(items.size()) + "]";
-			for (size_t i = 0; i < items.size() && i < 12; i++)
-			{
-				if (items[i].IsArray())
-				{
-					std::vector<RValue> inner = items[i].ToVector();
-					text += " [" + std::to_string(inner.size()) + ":";
-					for (size_t j = 0; j < inner.size() && j < 12; j++)
-						text += " " + (inner[j].IsArray() ? "[..]" : inner[j].ToString());
-					text += "]";
-				}
-				else text += " " + items[i].ToString();
-			}
-		}
-		else if (Value->m_Kind == VALUE_REAL || Value->m_Kind == VALUE_STRING || Value->m_Kind == VALUE_INT32 || Value->m_Kind == VALUE_INT64)
-			text = Value->ToString();
-		else
-			text = "<" + Value->GetKindName() + ">";
-		Log("global.%s = %.700s", Name, text.c_str());
+	static const char* names[] = {
+		"Normal Slormeline", "Magic Slormeline", "Rare Slormeline", "Epic Slormeline", "Legendary Slormeline",
+		"Slormandrite of Fate", "Slormandrite of Negation", "Slormandrite of True Potential",
+		"Slormandrite of Aptitude", "Slormandrite of Harmony", "Slormandrite of Virtue",
+	};
+	return Id >= 0 && Id < 11 ? names[Id] : "unknown material";
+}
+
+// With the third argument set the game only reports the count; the panel calls it this way every frame.
+static double MaterialStock(CInstance* Self, CInstance* Other, int Id)
+{
+	RValue arguments[4] = { RValue(static_cast<double>(Id)), RValue(1.0), RValue(1.0), RValue("slormite") };
+	RValue* pointers[4] = { &arguments[0], &arguments[1], &arguments[2], &arguments[3] };
+	RValue count;
+	g_CurrencySpend(Self, Other, count, 4, pointers);
+	return ToNumber(count);
+}
+
+// Recipe materials are ids joined by '|', one of each; the fifth field is the goldus cost.
+static bool CanAfford(CInstance* Self, CInstance* Other, int Recipe, std::string& Why)
+{
+	RValue recipes = g_Yytk->CallBuiltin("variable_instance_get", { RValue(Self), RValue("blacksmith_recipes") });
+	if (!recipes.IsArray())
 		return false;
-	});
+	std::vector<RValue> list = recipes.ToVector();
+	if (Recipe < 0 || static_cast<size_t>(Recipe) >= list.size() || !list[Recipe].IsArray())
+		return false;
+	std::vector<RValue> fields = list[Recipe].ToVector();
+	if (fields.size() < 5)
+		return false;
+
+	std::string materials = fields[3].ToString();
+	if (materials.find('*') != std::string::npos)
+	{
+		Why = "recipe cost format not understood: " + materials;
+		return false;
+	}
+
+	std::istringstream ids(materials);
+	std::string id_text;
+	while (std::getline(ids, id_text, '|'))
+	{
+		int id = 0;
+		try { id = std::stoi(id_text); }
+		catch (...) { Why = "recipe cost format not understood: " + materials; return false; }
+
+		double stock = MaterialStock(Self, Other, id);
+		if (stock - 1 < g_MinStock)
+		{
+			Why = std::string("not enough ") + MaterialName(id) + " (have " + std::to_string(static_cast<long long>(stock)) + ", keeping " + std::to_string(g_MinStock) + ")";
+			return false;
+		}
+	}
+
+	double cost = ToNumber(fields[4]);
+	double gold = ToNumber(g_Yytk->CallBuiltin("variable_global_get", { RValue("gold") }));
+	if (gold < cost)
+	{
+		Why = "not enough goldus";
+		return false;
+	}
+	return true;
 }
 
 // No config targets: take the scores recipe selected in the panel and aim every stat it rerolls at max.
@@ -355,7 +387,6 @@ static void Tick(CInstance* Self, CInstance* Other)
 				g_Attempts = 0;
 				g_Cooldown = 0;
 				Log("started, %d targets, max %d reforges", static_cast<int>(g_Targets.size()), g_MaxAttempts);
-				LogStockCandidates();
 				RValue recipes = g_Yytk->CallBuiltin("variable_instance_get", { RValue(Self), RValue("blacksmith_recipes") });
 				if (recipes.IsArray())
 				{
@@ -418,6 +449,10 @@ static void Tick(CInstance* Self, CInstance* Other)
 	if (recipe < 0)
 		return Stop("recipe not offered for this item");
 
+	std::string why = "could not read the recipe cost";
+	if (!CanAfford(Self, Other, recipe, why))
+		return Stop(why.c_str());
+
 	g_Yytk->CallBuiltin("variable_instance_set", { RValue(Self), RValue("blacksmith_selected_recipe"), RValue(recipe) });
 
 	RValue result;
@@ -473,7 +508,8 @@ EXPORTED AurieStatus ModuleInitialize(
 
 	g_StatFromScore = FindScript("gml_Script_scr_loot_stat_from_score");
 	g_Apply = FindScript("gml_Script_scr_blacksmith_recipe_apply");
-	if (!g_StatFromScore || !g_Apply)
+	g_CurrencySpend = FindScript("gml_Script_scr_currency_spend");
+	if (!g_StatFromScore || !g_Apply || !g_CurrencySpend)
 	{
 		DbgPrintEx(LOG_SEVERITY_ERROR, "[SlormReforger] game scripts not found");
 		return AURIE_OBJECT_NOT_FOUND;
