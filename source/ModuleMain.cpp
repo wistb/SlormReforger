@@ -30,6 +30,7 @@ Appearance g_Appearance;
 bool g_SuppressToggle = false;
 
 bool g_Visible = true;
+bool g_Manual = false;
 bool g_Running = false;
 bool g_WantStart = false;
 bool g_WantStop = false;
@@ -893,7 +894,10 @@ static void Refresh(CInstance* Self, CInstance* Other)
 	g_HasItem = g_PanelOpen && ReadSlotItem(Self, Other);
 	g_Recipes.clear();
 	if (!g_HasItem)
+	{
+		g_Item.clear();
 		return;
+	}
 
 	RValue recipes = g_Yytk->CallBuiltin("variable_instance_get", { RValue(Self), RValue("blacksmith_recipes") });
 	if (recipes.IsArray())
@@ -971,8 +975,8 @@ static void Tick(CInstance* Self, CInstance* Other)
 	}
 	else if (key_down && !g_KeyWasDown && GetForegroundWindow() == GetActiveWindow())
 	{
-		g_Visible = !g_Visible;
-		Log("overlay %s", g_Visible ? "shown" : "hidden");
+		(g_HasItem ? g_Visible : g_Manual) = !OverlayShown();
+		Log("overlay %s", OverlayShown() ? "shown" : "hidden");
 	}
 	g_KeyWasDown = key_down;
 
@@ -986,7 +990,7 @@ static void Tick(CInstance* Self, CInstance* Other)
 	if (g_GrantId >= 0 && !g_Running)
 		Grant(Self, Other, g_GrantId, g_GrantAmount);
 	g_GrantId = -1;
-	if (g_Visible && !g_Running)
+	if (OverlayShown() && !g_Running)
 	{
 		for (int id = 0; id < MATERIAL_COUNT; id++)
 			g_Stock[id] = MaterialStock(Self, Other, id);
@@ -998,10 +1002,15 @@ static void Tick(CInstance* Self, CInstance* Other)
 
 	if (!g_Running)
 	{
-		if (g_Visible && --g_Refresh <= 0)
+		// Also while hidden, so the hotkey knows whether an item is in the slot.
+		if (--g_Refresh <= 0)
 		{
 			g_Refresh = 20;
+			bool had_item = g_HasItem;
 			Refresh(Self, Other);
+			// Taking the item out closes the overlay, however it was opened.
+			if (had_item && !g_HasItem)
+				g_Manual = false;
 		}
 		return;
 	}

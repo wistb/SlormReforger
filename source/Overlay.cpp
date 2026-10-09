@@ -919,7 +919,7 @@ static void DrawWindow()
 	std::lock_guard guard(g_Lock);
 	ImGui::SetNextWindowPos({ 40, 40 }, ImGuiCond_FirstUseEver);
 	// The id after ### keeps the saved position when the title changes.
-	if (!ImGui::Begin("SlormReforger v" SLORMREFORGER_VERSION "###SlormReforger", &g_Visible, ImGuiWindowFlags_AlwaysAutoResize))
+	if (!ImGui::Begin("SlormReforger v" SLORMREFORGER_VERSION "###SlormReforger", g_HasItem ? &g_Visible : &g_Manual, ImGuiWindowFlags_AlwaysAutoResize))
 	{
 		ImGui::End();
 		return;
@@ -991,7 +991,7 @@ static void Frame(IDXGISwapChain* swapchain, UINT flags)
 		Aurie::DbgPrintEx(Aurie::LOG_SEVERITY_INFO, "[SlormReforger] overlay ready");
 	}
 
-	if (!g_Visible || !g_HasItem)
+	if (!OverlayShown())
 	{
 		g_HideMouse = false;
 		return;
@@ -1069,7 +1069,7 @@ static LRESULT CALLBACK WindowProc(HWND Window, UINT Message, WPARAM WParam, LPA
 	if (Message == WM_INPUT) LogOnce(saw_raw, "raw input seen");
 	if (Message == WM_CHAR) LogOnce(saw_char, "char messages seen");
 
-	if (g_Ready && g_Visible && g_HasItem)
+	if (g_Ready && OverlayShown())
 	{
 		// Mouse position and buttons are polled per frame; wheel and keys come from here.
 		if (!mouse || Message == WM_MOUSEWHEEL)
@@ -1094,12 +1094,12 @@ static LRESULT CALLBACK WindowProc(HWND Window, UINT Message, WPARAM WParam, LPA
 
 bool OverlayWantsMouse()
 {
-	return g_Ready && g_Visible && g_HasItem && ImGui::GetIO().WantCaptureMouse;
+	return g_Ready && OverlayShown() && ImGui::GetIO().WantCaptureMouse;
 }
 
 bool OverlayWantsKeys()
 {
-	return g_Ready && g_Visible && g_HasItem && ImGui::GetIO().WantTextInput;
+	return g_Ready && OverlayShown() && ImGui::GetIO().WantTextInput;
 }
 
 using PresentFn = HRESULT(WINAPI*)(IDXGISwapChain*, UINT, UINT);

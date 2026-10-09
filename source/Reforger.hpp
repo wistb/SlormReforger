@@ -120,7 +120,10 @@ extern Appearance g_Appearance;
 // Set while the hotkey is being rebound, so the key press does not also toggle the overlay.
 extern bool g_SuppressToggle;
 
+// With an item in the reforge slot the overlay shows unless hidden with the hotkey (g_Visible);
+// without one it shows only when opened with the hotkey (g_Manual).
 extern bool g_Visible;
+extern bool g_Manual;
 extern bool g_Running;
 extern bool g_WantStart;
 extern bool g_WantStop;
@@ -129,6 +132,10 @@ extern std::string g_Status;
 extern std::deque<std::string> g_Notes;
 
 extern bool g_HasItem;
+inline bool OverlayShown()
+{
+	return g_HasItem ? g_Visible : g_Manual;
+}
 extern std::vector<Affix> g_Item;
 extern std::string g_ItemSlot;
 extern int g_ItemLevel;
