@@ -18,7 +18,7 @@ struct Affix
 	bool has_shown = false;
 };
 
-enum class Goal { MaxRoll, Value, Roll };
+enum class Goal { Any, MaxRoll, Value, Roll };
 
 struct Target
 {
@@ -166,7 +166,9 @@ static void LoadConfig()
 		std::ofstream sample(g_ConfigPath);
 		sample << "# One target per line: TIER STAT GOAL\n"
 			"# TIER is N, D, M, R or E. STAT is a REF from dat_sta.json.\n"
-			"# GOAL is max (best possible roll), a number (displayed value to reach), or roll:N.\n"
+			"# GOAL is any (stat present, the default), max (best possible roll),\n"
+			"# a number (displayed value to reach), or roll:N.\n"
+			"# D dodge_add any\n"
 			"# D dodge_add max\n"
 			"# D dodge_add 1500\n"
 			"max_attempts 50\n"
@@ -189,11 +191,14 @@ static void LoadConfig()
 		Target target;
 		target.tier = first;
 		std::string goal;
-		if (!(words >> target.stat >> goal))
+		if (!(words >> target.stat))
 			continue;
+		if (!(words >> goal))
+			goal = "any";
 		try
 		{
-			if (goal == "max") target.goal = Goal::MaxRoll;
+			if (goal == "any") target.goal = Goal::Any;
+			else if (goal == "max") target.goal = Goal::MaxRoll;
 			else if (goal.rfind("roll:", 0) == 0) { target.goal = Goal::Roll; target.amount = std::stod(goal.substr(5)); }
 			else { target.goal = Goal::Value; target.amount = std::stod(goal); }
 		}
@@ -217,6 +222,7 @@ static bool Met(const Target& Target, const Affix& Affix)
 {
 	switch (Target.goal)
 	{
+	case Goal::Any: return true;
 	case Goal::MaxRoll: return Affix.roll >= MaxRoll(Target.tier, Target.stat);
 	case Goal::Roll: return Affix.roll >= Target.amount;
 	default: return Affix.has_shown && Affix.shown >= Target.amount;
