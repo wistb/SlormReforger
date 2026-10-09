@@ -3,3 +3,4 @@ obj/
 dist/
 nexus/page.md
 .env
+redist/

@@ -31,8 +31,18 @@ fi
 
 if [ "${1:-}" = package ]; then
 	VERSION=$(sed -n 's/^#define SLORMREFORGER_VERSION "\(.*\)"/\1/p' source/Version.hpp)
-	mkdir -p dist
+	mkdir -p dist redist
 	rm -f "dist/SlormReforger-$VERSION.zip"
+
+	# The frameworks are not kept in the repo: fetch the pinned official builds and check them.
+	fetch() {
+		[ -f "redist/$1" ] || curl -fsSL -o "redist/$1" "$2"
+		echo "$3  redist/$1" | sha256sum -c --quiet - || { echo "redist/$1 is not the pinned build; delete it and retry" >&2; exit 1; }
+	}
+	fetch AurieCore.dll https://github.com/AurieFramework/Aurie/releases/download/v2.0.2/AurieCore.dll \
+		18e3a1de980f487a6b3858b673d2030e96984dd96de3a047b43a263a5ba829ae
+	fetch YYToolkit.dll https://github.com/AurieFramework/YYToolkit/releases/download/v5.0.0c/YYToolkit.dll \
+		ae7809f136f9222e5f49393d7ce7c3ad4c375c171308e2414660946d4ba0378a
 	# Laid out to be extracted straight into the game folder.
 	python3 - "dist/SlormReforger-$VERSION.zip" <<'PY'
 import sys, zipfile
@@ -42,7 +52,7 @@ files = {
     "mods/Native/AurieCore.dll": "redist/AurieCore.dll",
     "mods/Aurie/YYToolkit.dll": "redist/YYToolkit.dll",
     "mods/Aurie/SlormReforger.dll": "bin/SlormReforger.dll",
-    "mods/licenses/NOTICE.txt": "redist/NOTICE.txt",
+    "mods/licenses/NOTICE.txt": "packaging/NOTICE.txt",
     "mods/licenses/AGPL-3.0.txt": "LICENSE",
     "mods/licenses/DearImGui-MIT.txt": "vendor/imgui/LICENSE.txt",
 }
