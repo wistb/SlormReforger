@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ./build.sh          build bin/SlormReforger.dll and the bin/version.dll proxy
 # ./build.sh deploy   build, then copy into the game's mods/Aurie
-# ./build.sh package  build, then write dist/SlormReforger-<version>.zip
+# ./build.sh package  build, then write dist/SlormReforger-v<version>.zip
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -32,7 +32,7 @@ fi
 if [ "${1:-}" = package ]; then
 	VERSION=$(sed -n 's/^#define SLORMREFORGER_VERSION "\(.*\)"/\1/p' source/Version.hpp)
 	mkdir -p dist redist
-	rm -f "dist/SlormReforger-$VERSION.zip"
+	rm -f "dist/SlormReforger-v$VERSION.zip"
 
 	# The frameworks are not kept in the repo: fetch the pinned official builds and check them.
 	fetch() {
@@ -44,7 +44,7 @@ if [ "${1:-}" = package ]; then
 	fetch YYToolkit.dll https://github.com/AurieFramework/YYToolkit/releases/download/v5.0.0c/YYToolkit.dll \
 		ae7809f136f9222e5f49393d7ce7c3ad4c375c171308e2414660946d4ba0378a
 	# Laid out to be extracted straight into the game folder.
-	python3 - "dist/SlormReforger-$VERSION.zip" <<'PY'
+	python3 - "dist/SlormReforger-v$VERSION.zip" <<'PY'
 import sys, zipfile
 files = {
     "version.dll": "bin/version.dll",
@@ -60,5 +60,5 @@ with zipfile.ZipFile(sys.argv[1], "w", zipfile.ZIP_DEFLATED) as archive:
     for name, source in files.items():
         archive.write(source, name)
 PY
-	echo "wrote dist/SlormReforger-$VERSION.zip"
+	echo "wrote dist/SlormReforger-v$VERSION.zip"
 fi

@@ -61,7 +61,7 @@ Needs Windows with the Visual Studio 2022 Build Tools (C++ workload). The build 
 ```sh
 ./build.sh           # build bin/SlormReforger.dll and bin/version.dll
 ./build.sh deploy    # build, then copy the mod into the game's mods/Aurie
-./build.sh package   # build, then write dist/SlormReforger-<version>.zip
+./build.sh package   # build, then write dist/SlormReforger-v<version>.zip
 ```
 
 - `deploy` needs the game folder: export `SLORM_GAME`, or put `SLORM_GAME="..."` in a file named `.env`.
