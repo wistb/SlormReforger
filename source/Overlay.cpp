@@ -56,6 +56,18 @@ const char* TierName(const std::string& Code)
 	return Code == "L" ? "Legendary" : Code.c_str();
 }
 
+// Rarity colours as the game shows them.
+static ImVec4 TierColor(const std::string& Code)
+{
+	if (Code == "M") return { 46 / 255.0f, 135 / 255.0f, 38 / 255.0f, 1.0f };
+	if (Code == "R") return { 23 / 255.0f, 106 / 255.0f, 177 / 255.0f, 1.0f };
+	if (Code == "E") return { 198 / 255.0f, 141 / 255.0f, 32 / 255.0f, 1.0f };
+	if (Code == "L") return { 206 / 255.0f, 70 / 255.0f, 7 / 255.0f, 1.0f };
+	return { 137 / 255.0f, 137 / 255.0f, 137 / 255.0f, 1.0f };
+}
+
+static const ImVec4 PURE_COLOR = { 70 / 255.0f, 231 / 255.0f, 176 / 255.0f, 1.0f };
+
 static std::string Column(const StatInfo& Stat, const std::string& Key)
 {
 	auto found = Stat.columns.find(Key);
@@ -139,10 +151,10 @@ static bool DrawItem()
 			bool reforgeable = std::any_of(std::begin(TIER_CODES), std::end(TIER_CODES), [&](const char* code) { return affix.tier == code; });
 			ImGui::TableNextRow();
 			ImGui::TableNextColumn();
-			ImGui::TextUnformatted(TierName(affix.tier));
+			ImGui::TextColored(TierColor(affix.tier), "%s", TierName(affix.tier));
 			ImGui::TableNextColumn();
 			ImGui::TextUnformatted(StatName(affix.stat).c_str());
-			if (affix.pure > 100) { ImGui::SameLine(); ImGui::TextColored({ 1.0f, 0.8f, 0.3f, 1.0f }, "pure"); }
+			if (affix.pure > 100) { ImGui::SameLine(); ImGui::TextColored(PURE_COLOR, "pure"); }
 			if (affix.locked) { ImGui::SameLine(); ImGui::TextDisabled("locked"); }
 			ImGui::TableNextColumn();
 			if (reforgeable)
@@ -216,11 +228,31 @@ static bool DrawTargets()
 			if (!InPool(stat, tier))
 				continue;
 			// Stats already on the item are marked; a stat cannot appear twice.
-			std::string label = stat.name;
+			const Affix* on_item = nullptr;
 			for (const Affix& affix : g_Item)
-				if (affix.stat == stat.ref) label += std::string("  (on item, ") + TierName(affix.tier) + (affix.locked ? ", locked)" : ")");
+				if (affix.stat == stat.ref) on_item = &affix;
 			ImGui::PushID(stat.ref.c_str());
-			if (ImGui::Selectable(label.c_str(), stat.ref == g_NewStat))
+			bool picked = ImGui::Selectable(stat.name.c_str(), stat.ref == g_NewStat);
+			if (on_item)
+			{
+				std::string tier = TierName(on_item->tier);
+				std::transform(tier.begin(), tier.end(), tier.begin(), [](unsigned char c) { return static_cast<char>(tolower(c)); });
+				ImGui::SameLine();
+				ImGui::TextColored({ 0.9f, 0.8f, 0.3f, 1.0f }, "[on item]");
+				ImGui::SameLine(0, 0);
+				ImGui::TextColored(TierColor(on_item->tier), "[%s]", tier.c_str());
+				if (on_item->pure > 100)
+				{
+					ImGui::SameLine(0, 0);
+					ImGui::TextColored(PURE_COLOR, "[pure]");
+				}
+				if (on_item->locked)
+				{
+					ImGui::SameLine(0, 0);
+					ImGui::TextColored({ 1.0f, 0.4f, 0.4f, 1.0f }, "[locked]");
+				}
+			}
+			if (picked)
 				g_NewStat = stat.ref;
 			ImGui::PopID();
 		}

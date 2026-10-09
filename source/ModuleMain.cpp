@@ -130,10 +130,13 @@ static bool ReadSlotItem(CInstance* Self, CInstance* Other)
 	{
 		if (!hero.IsArray())
 			continue;
-		std::vector<RValue*> slots = const_cast<RValue&>(hero).ToRefVector();
-		if (slots.size() > REFORGE_SLOT && slots[REFORGE_SLOT] && IsItem(*slots[REFORGE_SLOT]))
+		// Fetch the one slot; copying all 674 is slow.
+		if (ToNumber(g_Yytk->CallBuiltin("array_length", { hero })) <= REFORGE_SLOT)
+			continue;
+		RValue slot = g_Yytk->CallBuiltin("array_get", { hero, RValue(static_cast<double>(REFORGE_SLOT)) });
+		if (IsItem(slot))
 		{
-			item = *slots[REFORGE_SLOT];
+			item = slot;
 			found++;
 		}
 	}
@@ -270,7 +273,7 @@ int TargetState(const Target& Target, std::string& Text)
 	{
 		if (Met(Target, *match))
 		{
-			Text = match->locked ? "met (locked)" : "met";
+			Text = match->locked ? "met [locked]" : "met";
 			return 0;
 		}
 		if (match->locked)
@@ -530,7 +533,7 @@ static void Tick(CInstance* Self, CInstance* Other)
 	{
 		if (g_Visible && --g_Refresh <= 0)
 		{
-			g_Refresh = 10;
+			g_Refresh = 20;
 			Refresh(Self, Other);
 		}
 		return;
@@ -604,9 +607,15 @@ static void Tick(CInstance* Self, CInstance* Other)
 // Runs once per frame, after the UI object's Step event.
 static void CodeCallback(FWCodeEvent& Event)
 {
+	// This runs for every event of every object, so compare by pointer once the event is known.
+	static CCode* step_code = nullptr;
 	auto& [self, other, code, argument_count, arguments] = Event.Arguments();
-	if (!code || !code->GetName() || std::string_view(code->GetName()) != "gml_Object_obj_ui_next_gen_Step_0")
-		return;
+	if (code != step_code || !code)
+	{
+		if (step_code || !code || !code->GetName() || std::string_view(code->GetName()) != "gml_Object_obj_ui_next_gen_Step_0")
+			return;
+		step_code = code;
+	}
 
 	// The swap chain only exists once the game is running.
 	static bool installed = false;
