@@ -24,6 +24,7 @@ int g_MaxAttempts = 50;
 bool g_AllowPureLoss = false;
 int g_MinStock[MATERIAL_COUNT] = {};
 bool g_AutoLock = false;
+bool g_AutoAdd = false;
 Appearance g_Appearance;
 bool g_SuppressToggle = false;
 
@@ -217,6 +218,7 @@ static void LoadConfig()
 	g_AllowPureLoss = false;
 	std::fill(std::begin(g_MinStock), std::end(g_MinStock), 0);
 	g_AutoLock = false;
+	g_AutoAdd = false;
 	g_Appearance = Appearance();
 
 	std::ifstream file(g_ConfigPath);
@@ -241,6 +243,7 @@ static void LoadConfig()
 			continue;
 		}
 		if (first == "auto_lock") { int flag = 0; words >> flag; g_AutoLock = flag != 0; continue; }
+		if (first == "auto_add") { int flag = 0; words >> flag; g_AutoAdd = flag != 0; continue; }
 		if (first == "theme") { words >> g_Appearance.theme; continue; }
 		if (first == "accent") { int on = 0; words >> on >> g_Appearance.accent[0] >> g_Appearance.accent[1] >> g_Appearance.accent[2]; g_Appearance.custom_accent = on != 0; continue; }
 		if (first == "primary") { int on = 0; words >> on >> g_Appearance.primary[0] >> g_Appearance.primary[1] >> g_Appearance.primary[2]; g_Appearance.custom_primary = on != 0; continue; }
@@ -290,6 +293,7 @@ void SaveConfig()
 	file << "max_attempts " << g_MaxAttempts << '\n'
 		<< "allow_pure_loss " << (g_AllowPureLoss ? 1 : 0) << '\n'
 		<< "auto_lock " << (g_AutoLock ? 1 : 0) << '\n'
+		<< "auto_add " << (g_AutoAdd ? 1 : 0) << '\n'
 		<< "theme " << g_Appearance.theme << '\n'
 		<< "accent " << (g_Appearance.custom_accent ? 1 : 0) << ' ' << g_Appearance.accent[0] << ' ' << g_Appearance.accent[1] << ' ' << g_Appearance.accent[2] << '\n'
 		<< "primary " << (g_Appearance.custom_primary ? 1 : 0) << ' ' << g_Appearance.primary[0] << ' ' << g_Appearance.primary[1] << ' ' << g_Appearance.primary[2] << '\n'
@@ -332,6 +336,12 @@ static bool Met(const Target& Target, const Affix& Affix)
 	case Goal::Roll: return Affix.roll >= Target.amount;
 	default: return Affix.has_shown && Affix.shown >= Target.amount;
 	}
+}
+
+// Order the game offers its "Add" recipes in: Magic, then Rare, then Epic. -1 for other tiers.
+int AddRank(const std::string& Tier)
+{
+	return Tier == "M" ? 0 : Tier == "R" ? 1 : Tier == "E" ? 2 : -1;
 }
 
 // 0 met, 1 still to do, 2 cannot be reached by reforging.
@@ -382,7 +392,10 @@ int TargetState(const Target& Target, std::string& Text)
 	if (in_tier == 0)
 	{
 		Text = std::string("no ") + TierName(Target.tier) + " stat on item";
-		return 2;
+		if (!g_AutoAdd || AddRank(Target.tier) < 0)
+			return 2;
+		Text += ", will add";
+		return 1;
 	}
 	if (unlocked == 0)
 	{
@@ -402,6 +415,8 @@ static double g_GoldAtStart = 0;
 // Lock or unlock applied last step, checked on the next.
 static std::string g_LockTier, g_LockStat;
 static bool g_LockWanted = false;
+// Tier an "Add" recipe was applied for last step, checked on the next.
+static std::string g_AddTier;
 
 static void Stop(const char* Reason)
 {
@@ -652,6 +667,7 @@ static void Start(CInstance* Self, CInstance* Other)
 	}
 	g_GoldAtStart = ToNumber(g_Yytk->CallBuiltin("variable_global_get", { RValue("gold") }));
 	g_LockStat.clear();
+	g_AddTier.clear();
 	g_Running = true;
 	g_Attempts = 0;
 	g_Cooldown = 0;
@@ -725,6 +741,16 @@ static void Tick(CInstance* Self, CInstance* Other)
 		if (!done)
 			return Stop((StatName(stat) + ": the " + (g_LockWanted ? "lock" : "unlock") + " did not take effect").c_str());
 	}
+	if (!g_AddTier.empty())
+	{
+		bool done = false;
+		for (const Affix& affix : g_Item)
+			if (affix.tier == g_AddTier) done = true;
+		std::string tier = g_AddTier;
+		g_AddTier.clear();
+		if (!done)
+			return Stop((std::string("adding ") + TierName(tier) + " stats did not take effect").c_str());
+	}
 	if (g_AutoLock && !g_AllScores)
 	{
 		for (const Affix& affix : g_Item)
@@ -769,6 +795,11 @@ static void Tick(CInstance* Self, CInstance* Other)
 			return Stop((StatName(target.stat) + ": " + problem).c_str());
 		pending = &target;
 		recipe_type = match ? 0 : 1;
+		bool in_tier = false;
+		for (const Affix& affix : g_Item)
+			if (affix.tier == target.tier) in_tier = true;
+		if (!in_tier)
+			recipe_type = 2;
 		break;
 	}
 	if (!pending && !lock_affix)
@@ -783,7 +814,21 @@ static void Tick(CInstance* Self, CInstance* Other)
 			return Stop("lock recipe not offered for this stat");
 	}
 
-	if (!lock_affix)
+	// The game offers one "Add" at a time, so an earlier rarity may have to come first.
+	std::string add_tier;
+	if (!lock_affix && recipe_type == 2)
+	{
+		for (const char* tier : { "M", "R", "E" })
+		{
+			if (recipe >= 0 || AddRank(tier) > AddRank(pending->tier))
+				break;
+			recipe = FindRecipe(Self, 2, tier);
+			add_tier = tier;
+		}
+		if (recipe < 0)
+			return Stop((std::string("no recipe offered to add ") + TierName(pending->tier) + " stats").c_str());
+	}
+	else if (!lock_affix)
 	{
 		// Both reroll types hit every unlocked stat of the tier.
 		for (const Affix& affix : g_Item)
@@ -806,7 +851,7 @@ static void Tick(CInstance* Self, CInstance* Other)
 	g_Yytk->CallBuiltin("variable_instance_set", { RValue(Self), RValue("blacksmith_selected_recipe"), RValue(recipe) });
 
 	// For a lock or unlock the game passes the stat's position (the recipe's seventh field);
-	// a reroll takes no argument. A lock applied without it crashes the game.
+	// a reroll or an add takes no argument. A lock applied without it crashes the game.
 	RValue result;
 	RValue argument(lock_position);
 	if (lock_affix)
@@ -815,6 +860,7 @@ static void Tick(CInstance* Self, CInstance* Other)
 		g_LockStat = lock_affix->stat;
 		g_LockWanted = !unlock;
 	}
+	g_AddTier = add_tier;
 	RValue* arguments[1] = { &argument };
 	Log("applying recipe %d%s", recipe, lock_affix ? " (lock)" : "");
 	g_Apply(Self, Other, result, lock_affix ? 1 : 0, arguments);
@@ -827,6 +873,8 @@ static void Tick(CInstance* Self, CInstance* Other)
 
 	if (lock_affix)
 		Note("%d: %s %s", g_Attempts, unlock ? "unlock" : "lock", StatName(lock_affix->stat).c_str());
+	else if (!add_tier.empty())
+		Note("%d: add %s stats for %s", g_Attempts, TierName(add_tier), StatName(pending->stat).c_str());
 	else
 		Note("%d: reroll %s %s for %s", g_Attempts, TierName(pending->tier), recipe_type ? "stats" : "scores", StatName(pending->stat).c_str());
 }

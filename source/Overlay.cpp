@@ -431,11 +431,23 @@ static bool DrawRunSettings()
 	for (const Recipe& recipe : g_Recipes)
 	{
 		bool reroll = recipe.type == 0 || recipe.type == 1;
-		if (!reroll && !(recipe.type == 3 && g_AutoLock))
+		bool add = recipe.type == 2 && g_AutoAdd && recipe.tier.size() == 1;
+		if (!reroll && !add && !(recipe.type == 3 && g_AutoLock))
 			continue;
 		bool relevant = g_Targets.empty() && reroll;
 		for (const Target& target : g_Targets)
-			if (!recipe.tier.empty() && std::tolower(static_cast<unsigned char>(target.tier[0])) == recipe.tier[0]) relevant = true;
+		{
+			if (add)
+			{
+				// An add for an earlier rarity also counts; the game chains them.
+				bool on_item = false;
+				for (const Affix& affix : g_Item)
+					if (affix.tier == target.tier) on_item = true;
+				std::string tier(1, static_cast<char>(std::toupper(static_cast<unsigned char>(recipe.tier[0]))));
+				if (!on_item && AddRank(tier) >= 0 && AddRank(tier) <= AddRank(target.tier)) relevant = true;
+			}
+			else if (!recipe.tier.empty() && std::tolower(static_cast<unsigned char>(target.tier[0])) == recipe.tier[0]) relevant = true;
+		}
 		if (!relevant)
 			continue;
 		for (const auto& [id, count] : ParseCost(recipe.materials))
@@ -459,6 +471,7 @@ static bool DrawRunSettings()
 	}
 	changed |= ImGui::Checkbox("Allow rerolling pure stats", &g_AllowPureLoss);
 	changed |= ImGui::Checkbox("Lock stats as they reach their target", &g_AutoLock);
+	changed |= ImGui::Checkbox("Add missing tiers automatically", &g_AutoAdd);
 	g_MaxAttempts = (std::max)(g_MaxAttempts, 1);
 	return changed;
 }

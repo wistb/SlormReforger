@@ -86,6 +86,8 @@ extern bool g_AllowPureLoss;
 // Reserve kept of each material, by material id.
 extern int g_MinStock[];
 extern bool g_AutoLock;
+// Apply the game's "Add" recipes when a target's tier is not on the item.
+extern bool g_AutoAdd;
 extern Appearance g_Appearance;
 // Set while the hotkey is being rebound, so the key press does not also toggle the overlay.
 extern bool g_SuppressToggle;
@@ -115,6 +117,7 @@ const char* MaterialName(int Id);
 void SaveConfig();
 std::vector<std::pair<int, int>> ParseCost(const std::string& Spec);
 int TargetState(const Target& Target, std::string& Text);
+int AddRank(const std::string& Tier);
 const char* TierName(const std::string& Code);
 
 void LoadGameData();
