@@ -2,18 +2,23 @@
 
 Automatic reforging at Friedrich's blacksmith in [The Slormancer](https://store.steampowered.com/app/1104280/The_Slormancer/).
 
-SlormReforger adds a window to the reforge panel where you pick the stats and rolls you want. Press Start and it rerolls until the item has them, then stops.
+SlormReforger adds a window to the reforge panel where you pick the stats and rolls you want, or import them from a build planner link. Press Start and it rerolls until the item has them, then stops.
 
 It works through the game's own reforge recipes and pays their normal costs. It does not edit items, rolls, or save.
 
-![SlormReforger rerolling an item](nexus/sample.gif)
+![SlormReforger importing a preset and rerolling an item](nexus/sample.gif)
 
 ## Features
 
-- **Targets per tier.** Choose a stat and a goal: have the stat at any roll, max roll, at least a given value, or at least a given roll.
+- **Targets per tier.** For Normal, Defense, Magic, Rare and Epic stats, choose a stat and a goal: have the stat at any roll, max roll, at least a given value, or at least a given roll.
+- **Reaper, Mastery and Attribute stats.** Target the single stat each of these holds, by stat, max value or minimum value.
+- **Legendary effects.** Target a legendary for the item's slot. The run adds one, rerolls the effect until it is the one you want, then rerolls its score.
+- **Item level.** An Item level target applies Update Item until the item reaches your character's level. It runs first, because the level decides which stats can roll.
+- **Presets from slorm-planner.** Paste a [slorm-planner](https://cayrac.github.io/slorm-planner/) share link on the Presets tab, then press Import preset on the Reforge tab to load that build's targets for the item in the slot.
 - **The game's real stat pools.** The stat list is the game's own "Possible Outcomes" for that item and tier, so you can only pick what can actually roll. Stats already on the item are tagged.
 - **Auto-lock.** Optionally locks each target stat as soon as it is met and unlocks one that still needs a better roll, so several targets in one tier are found one at a time.
-- **Auto-add.** Optionally applies the game's Add Magic, Rare and Epic recipes when a target's tier is not on the item yet.
+- **Auto-add.** Optionally applies the game's Add recipes (Magic, Rare, Epic, Reaper, Mastery, Attribute, Legendary) when a target's tier is not on the item yet.
+- **Shuffle tiers.** Optionally unlocks and rerolls a target stat out of another tier so it can land in the tier you chose, and frees a stat that is not a target when that tier is fully locked.
 - **Material reserves.** Set how many of each material to keep. A run stops before it would go below that.
 - **Careful by default.** It refuses targets that cannot be reached, leaves pure stats alone unless you allow it, stops if you close the panel, and has a step limit per run.
 - **Run log.** Every reroll and lock is listed, with the goldus spent at the end.
@@ -38,11 +43,13 @@ To uninstall, delete `version.dll`, `SlormReforger-README.txt`, `aurie.log` and 
 ## Use
 
 1. Talk to Friedrich, open Reforge Equipment and put an item in the slot. The SlormReforger window appears.
-2. Under Targets, pick a tier, a stat and a goal, then press Add target. The Max roll button beside a stat on the item adds that target in one click.
+2. Under Targets, pick a tier, a stat and a goal, then press Add target. The Max roll button beside a stat on the item adds that target in one click. Import preset loads the targets from a planner build instead, replacing the current ones.
 3. Under Runs, set the step limit and how much of each material to keep.
 4. Press Start. Press Stop, or close the panel, to end a run early.
 
-F6 hides and shows the window. The key can be changed on the Options tab.
+F6 hides and shows the window, and opens it away from the blacksmith, where the Presets and Options tabs still work. The key can be changed on the Options tab.
+
+To add a preset, open the Presets tab, paste a slorm-planner share link and press Import. Several presets can be kept; the selected one is what Import preset reads.
 
 Each target shows where it stands: green when met, yellow while there is work to do, red when reforging cannot get there.
 
