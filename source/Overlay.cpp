@@ -68,34 +68,15 @@ static ImVec4 TierColor(const std::string& Code)
 
 static const ImVec4 PURE_COLOR = { 70 / 255.0f, 231 / 255.0f, 176 / 255.0f, 1.0f };
 
-static std::string Column(const StatInfo& Stat, const std::string& Key)
-{
-	auto found = Stat.columns.find(Key);
-	return found != Stat.columns.end() ? found->second : "";
-}
-
-// Which stats a tier can roll on the item in the slot.
+// Which stats a tier can roll on the item in the slot, from the game's own list.
 static bool InPool(const StatInfo& Stat, const std::string& Tier)
 {
 	if (g_AllStats || !g_HasItem)
 		return true;
-
-	std::string slot = g_ItemSlot;
-	std::transform(slot.begin(), slot.end(), slot.begin(), [](unsigned char c) { return static_cast<char>(toupper(c)); });
-	if (slot == "BODY")
-		slot = "ARMOR";
-	if (!Stat.columns.contains(slot))
+	auto pool = g_Pools.find(Tier);
+	if (pool == g_Pools.end() || pool->second.empty())
 		return true;
-
-	int min_level = atoi(Column(Stat, "MIN_LEVEL").c_str());
-	if (min_level > g_ItemLevel)
-		return false;
-
-	std::string marker = Column(Stat, slot);
-	if (Tier == "N") return marker == "P";
-	if (Tier == "D") return Column(Stat, "CATEGORY") == "defense" && !marker.empty();
-	if (Tier == "M" || Tier == "R") return marker == "S";
-	return marker == "E";
+	return FindInPool(Tier, Stat.ref) != nullptr;
 }
 
 static std::string Describe(const Target& Target)

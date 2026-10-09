@@ -1,4 +1,5 @@
 #include "Reforger.hpp"
+#include <algorithm>
 #include <cstdarg>
 #include <fstream>
 #include <sstream>
@@ -13,6 +14,7 @@ static fs::path g_ConfigPath;
 static PFUNC_YYGMLScript g_StatFromScore = nullptr;
 static PFUNC_YYGMLScript g_Apply = nullptr;
 static PFUNC_YYGMLScript g_CurrencySpend = nullptr;
+static PFUNC_YYGMLScript g_RollStats = nullptr;
 
 std::recursive_mutex g_Lock;
 
@@ -29,6 +31,7 @@ int g_Attempts = 0;
 std::string g_Status = "idle";
 std::deque<std::string> g_Notes;
 
+std::map<std::string, std::vector<PoolEntry>> g_Pools;
 bool g_HasItem = false;
 static bool g_PanelOpen = false;
 std::vector<Affix> g_Item;
@@ -117,6 +120,39 @@ static bool IsItem(const RValue& Value)
 	return parts.size() > 1 && parts[0].IsArray();
 }
 
+// The game's own "Possible Outcomes": scr_loot_roll_stats(item, tier, 1) lists
+// [min roll, max roll, stat, ?, already on item, ?] without rolling anything.
+static void ReadPools(CInstance* Self, CInstance* Other, const RValue& Item)
+{
+	static std::string last;
+	std::string signature = g_ItemSlot + ' ' + std::to_string(g_ItemLevel);
+	for (const Affix& affix : g_Item)
+		signature += ' ' + affix.tier + affix.stat;
+	if (signature == last || !g_RollStats)
+		return;
+	last = signature;
+
+	g_Pools.clear();
+	for (const char* tier : { "N", "D", "M", "R", "E" })
+	{
+		RValue arguments[3] = { Item, RValue(tier), RValue(1.0) };
+		RValue* pointers[3] = { &arguments[0], &arguments[1], &arguments[2] };
+		RValue list;
+		g_RollStats(Self, Other, list, 3, pointers);
+		if (!list.IsArray())
+			continue;
+		for (const RValue& row : list.ToVector())
+		{
+			if (!row.IsArray())
+				continue;
+			std::vector<RValue> fields = row.ToVector();
+			if (fields.size() < 5 || !fields[2].IsString())
+				continue;
+			g_Pools[tier].push_back({ fields[2].ToString(), ToNumber(fields[0]), ToNumber(fields[1]), ToNumber(fields[4]) != 0 });
+		}
+	}
+}
+
 // Reads the item in the reforge slot, with the values the game would display.
 static bool ReadSlotItem(CInstance* Self, CInstance* Other)
 {
@@ -165,6 +201,7 @@ static bool ReadSlotItem(CInstance* Self, CInstance* Other)
 		g_Item[affix_index].has_shown = true;
 		affix_index++;
 	}
+	ReadPools(Self, Other, item);
 	return true;
 }
 
@@ -231,8 +268,21 @@ void SaveConfig()
 }
 
 // Best roll for a tier. Percent stats scale down on low-level items.
+const PoolEntry* FindInPool(const std::string& Tier, const std::string& Stat)
+{
+	auto pool = g_Pools.find(Tier);
+	if (pool == g_Pools.end())
+		return nullptr;
+	for (const PoolEntry& entry : pool->second)
+		if (entry.stat == Stat) return &entry;
+	return nullptr;
+}
+
 double MaxRoll(const std::string& Tier, const std::string& Stat)
 {
+	if (const PoolEntry* entry = FindInPool(Tier, Stat))
+		return entry->max;
+
 	double base = Tier == "N" ? 100 : Tier == "E" ? 40 : 65;
 	bool percent = Stat.ends_with("_percent") || Stat.ends_with("_mult");
 	if (!percent)
@@ -291,6 +341,12 @@ int TargetState(const Target& Target, std::string& Text)
 		Text = std::string("already on the item as a ") + TierName(elsewhere->tier) + " stat";
 		return 2;
 	}
+	auto pool = g_Pools.find(Target.tier);
+	if (pool != g_Pools.end() && !pool->second.empty() && !FindInPool(Target.tier, Target.stat))
+	{
+		Text = std::string("cannot roll as a ") + TierName(Target.tier) + " stat on this item";
+		return 2;
+	}
 	if (in_tier == 0)
 	{
 		Text = std::string("the item has no ") + TierName(Target.tier) + " stat to reroll";
@@ -301,7 +357,12 @@ int TargetState(const Target& Target, std::string& Text)
 		Text = std::string("every ") + TierName(Target.tier) + " stat is locked";
 		return 2;
 	}
-	Text = "not on the item yet, stats will be rerolled";
+	int possible = 0;
+	if (pool != g_Pools.end())
+		for (const PoolEntry& entry : pool->second) possible += entry.on_item ? 0 : 1;
+	Text = "not on the item yet";
+	if (possible > 0)
+		Text += ", one of " + std::to_string(possible) + " stats the reroll can give";
 	return 1;
 }
 
@@ -668,6 +729,7 @@ EXPORTED AurieStatus ModuleInitialize(
 	g_StatFromScore = FindScript("gml_Script_scr_loot_stat_from_score");
 	g_Apply = FindScript("gml_Script_scr_blacksmith_recipe_apply");
 	g_CurrencySpend = FindScript("gml_Script_scr_currency_spend");
+	g_RollStats = FindScript("gml_Script_scr_loot_roll_stats");
 	if (!g_StatFromScore || !g_Apply || !g_CurrencySpend)
 	{
 		DbgPrintEx(LOG_SEVERITY_ERROR, "[SlormReforger] game scripts not found");

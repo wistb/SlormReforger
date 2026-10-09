@@ -45,6 +45,15 @@ struct StatInfo
 	std::map<std::string, std::string> columns;
 };
 
+// One stat a tier can roll on the slotted item, as the game lists it.
+struct PoolEntry
+{
+	std::string stat;
+	double min = 0;
+	double max = 0;
+	bool on_item = false;
+};
+
 constexpr int MATERIAL_COUNT = 11;
 
 // Guards everything below; the game step writes it, the overlay reads and edits it.
@@ -68,11 +77,13 @@ extern std::vector<Affix> g_Item;
 extern std::string g_ItemSlot;
 extern int g_ItemLevel;
 extern std::vector<Recipe> g_Recipes;
+extern std::map<std::string, std::vector<PoolEntry>> g_Pools;
 extern double g_Stock[MATERIAL_COUNT];
 extern double g_Gold;
 
 extern std::vector<StatInfo> g_Stats;
 
+const PoolEntry* FindInPool(const std::string& Tier, const std::string& Stat);
 double MaxRoll(const std::string& Tier, const std::string& Stat);
 const char* MaterialName(int Id);
 void SaveConfig();
