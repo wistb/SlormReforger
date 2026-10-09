@@ -248,6 +248,59 @@ static bool Met(const Target& Target, const Affix& Affix)
 	}
 }
 
+// 0 met, 1 still to do, 2 cannot be reached by reforging.
+int TargetState(const Target& Target, std::string& Text)
+{
+	const Affix* match = nullptr;
+	const Affix* elsewhere = nullptr;
+	int in_tier = 0, unlocked = 0;
+	for (const Affix& affix : g_Item)
+	{
+		if (affix.tier == Target.tier)
+		{
+			in_tier++;
+			if (!affix.locked) unlocked++;
+			if (affix.stat == Target.stat) match = &affix;
+		}
+		else if (affix.stat == Target.stat) elsewhere = &affix;
+	}
+
+	char text[96];
+	if (match)
+	{
+		if (Met(Target, *match))
+		{
+			Text = match->locked ? "met (locked)" : "met";
+			return 0;
+		}
+		if (match->locked)
+		{
+			Text = "locked, its roll cannot change";
+			return 2;
+		}
+		snprintf(text, sizeof(text), "roll %g of %g", match->roll, MaxRoll(Target.tier, Target.stat));
+		Text = text;
+		return 1;
+	}
+	if (elsewhere)
+	{
+		Text = std::string("already on the item as a ") + TierName(elsewhere->tier) + " stat";
+		return 2;
+	}
+	if (in_tier == 0)
+	{
+		Text = std::string("the item has no ") + TierName(Target.tier) + " stat to reroll";
+		return 2;
+	}
+	if (unlocked == 0)
+	{
+		Text = std::string("every ") + TierName(Target.tier) + " stat is locked";
+		return 2;
+	}
+	Text = "not on the item yet, stats will be rerolled";
+	return 1;
+}
+
 static void Stop(const char* Reason)
 {
 	Note("stopped after %d reforges: %s", g_Attempts, Reason);
@@ -505,6 +558,9 @@ static void Tick(CInstance* Self, CInstance* Other)
 
 		if (match && Met(target, *match))
 			continue;
+		std::string problem;
+		if (TargetState(target, problem) == 2)
+			return Stop((StatName(target.stat) + ": " + problem).c_str());
 		pending = &target;
 		recipe_type = match ? 0 : 1;
 		break;

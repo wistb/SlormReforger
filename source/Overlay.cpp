@@ -49,7 +49,7 @@ void OverlaySetIniPath(const std::string& Path)
 	g_IniPath = Path;
 }
 
-static const char* TierName(const std::string& Code)
+const char* TierName(const std::string& Code)
 {
 	for (int i = 0; i < 5; i++)
 		if (Code == TIER_CODES[i]) return TIER_NAMES[i];
@@ -192,6 +192,14 @@ static bool DrawTargets()
 		}
 		ImGui::SameLine();
 		ImGui::TextUnformatted(Describe(g_Targets[i]).c_str());
+		if (g_HasItem)
+		{
+			static const ImVec4 colors[] = { { 0.4f, 0.9f, 0.4f, 1.0f }, { 0.9f, 0.8f, 0.3f, 1.0f }, { 1.0f, 0.4f, 0.4f, 1.0f } };
+			std::string state_text;
+			int state = TargetState(g_Targets[i], state_text);
+			ImGui::SameLine();
+			ImGui::TextColored(colors[state], "- %s", state_text.c_str());
+		}
 		ImGui::PopID();
 	}
 
@@ -207,8 +215,12 @@ static bool DrawTargets()
 		{
 			if (!InPool(stat, tier))
 				continue;
+			// Stats already on the item are marked; a stat cannot appear twice.
+			std::string label = stat.name;
+			for (const Affix& affix : g_Item)
+				if (affix.stat == stat.ref) label += std::string("  (on item, ") + TierName(affix.tier) + (affix.locked ? ", locked)" : ")");
 			ImGui::PushID(stat.ref.c_str());
-			if (ImGui::Selectable(stat.name.c_str(), stat.ref == g_NewStat))
+			if (ImGui::Selectable(label.c_str(), stat.ref == g_NewStat))
 				g_NewStat = stat.ref;
 			ImGui::PopID();
 		}

@@ -76,6 +76,8 @@ extern std::vector<StatInfo> g_Stats;
 double MaxRoll(const std::string& Tier, const std::string& Stat);
 const char* MaterialName(int Id);
 void SaveConfig();
+int TargetState(const Target& Target, std::string& Text);
+const char* TierName(const std::string& Code);
 
 void LoadGameData();
 const StatInfo* FindStat(const std::string& Ref);
