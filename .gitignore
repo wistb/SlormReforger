@@ -1,4 +1,5 @@
 bin/
 obj/
 dist/
-nexus/
+nexus/page.md
+.env

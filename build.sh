@@ -5,7 +5,9 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-GAME="${SLORM_GAME:?set SLORM_GAME to the game folder}"
+# "deploy" needs the game folder: export SLORM_GAME, or put SLORM_GAME="..." in .env (untracked).
+[ -f .env ] && . ./.env
+GAME="${SLORM_GAME:-}"
 VSWHERE="${VSWHERE:?set VSWHERE to the path of vswhere.exe}"
 
 [ -f "$VSWHERE" ] || { echo "vswhere not found: install VS 2022 Build Tools with the C++ workload" >&2; exit 1; }
@@ -16,6 +18,7 @@ MSBUILD_WIN=$("$VSWHERE" -latest -products '*' -requires Microsoft.Component.MSB
 "$(wslpath -u "$MSBUILD_WIN")" "$(wslpath -w proxy/Proxy.vcxproj)" -nologo -v:minimal -p:Configuration=Release -p:Platform=x64
 
 if [ "${1:-}" = deploy ]; then
+	[ -d "$GAME/mods/Aurie" ] || { echo "set SLORM_GAME to the game folder (it must contain mods/Aurie)" >&2; exit 1; }
 	until cp bin/SlormReforger.dll "$GAME/mods/Aurie/" 2>/dev/null; do
 		echo "waiting for the game to release SlormReforger.dll..."; sleep 3
 	done
