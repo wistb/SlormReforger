@@ -360,7 +360,15 @@ static bool DrawTargets()
 			break;
 		}
 		ImGui::SameLine();
-		ImGui::TextUnformatted(Describe(g_Targets[i]).c_str());
+		// The tier name in its colour, the rest plain.
+		std::string text = Describe(g_Targets[i]);
+		size_t colon = text.find(':');
+		ImGui::TextColored(TierColor(g_Targets[i].tier), "%s", text.substr(0, colon).c_str());
+		if (colon != std::string::npos)
+		{
+			ImGui::SameLine(0, 0);
+			ImGui::TextUnformatted(text.substr(colon).c_str());
+		}
 		if (g_HasItem)
 		{
 			static const ImVec4 colors[] = { { 0.4f, 0.9f, 0.4f, 1.0f }, { 0.9f, 0.8f, 0.3f, 1.0f }, { 1.0f, 0.4f, 0.4f, 1.0f } };
