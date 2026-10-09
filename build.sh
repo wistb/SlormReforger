@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# ./build.sh          build bin/SlormReforger.dll
+# ./build.sh          build bin/SlormReforger.dll and the bin/version.dll proxy
 # ./build.sh deploy   build, then copy into the game's mods/Aurie
 # ./build.sh package  build, then write dist/SlormReforger-<version>.zip
 set -euo pipefail
@@ -13,6 +13,7 @@ MSBUILD_WIN=$("$VSWHERE" -latest -products '*' -requires Microsoft.Component.MSB
 [ -n "$MSBUILD_WIN" ] || { echo "MSBuild not found" >&2; exit 1; }
 
 "$(wslpath -u "$MSBUILD_WIN")" "$(wslpath -w SlormReforger.vcxproj)" -nologo -v:minimal -p:Configuration=Release -p:Platform=x64
+"$(wslpath -u "$MSBUILD_WIN")" "$(wslpath -w proxy/Proxy.vcxproj)" -nologo -v:minimal -p:Configuration=Release -p:Platform=x64
 
 if [ "${1:-}" = deploy ]; then
 	until cp bin/SlormReforger.dll "$GAME/mods/Aurie/" 2>/dev/null; do
