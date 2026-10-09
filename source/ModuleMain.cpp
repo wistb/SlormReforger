@@ -30,6 +30,7 @@ std::string g_Status = "idle";
 std::deque<std::string> g_Notes;
 
 bool g_HasItem = false;
+static bool g_PanelOpen = false;
 std::vector<Affix> g_Item;
 std::string g_ItemSlot;
 int g_ItemLevel = 0;
@@ -449,10 +450,11 @@ static bool TargetsFromSelectedRecipe(CInstance* Self, CInstance* Other)
 // What the overlay shows: item, recipes, stock.
 static void Refresh(CInstance* Self, CInstance* Other)
 {
-	bool had_item = g_HasItem;
-	g_HasItem = ReadSlotItem(Self, Other);
-	if (g_HasItem != had_item)
-		Log("reforge slot %s", g_HasItem ? "has an item" : "is empty");
+	// The slot keeps its item when the menu closes, so also require Friedrich's reforge tab.
+	RValue citizen = g_Yytk->CallBuiltin("variable_instance_get", { RValue(Self), RValue("menu_citizen") });
+	RValue panel = g_Yytk->CallBuiltin("variable_instance_get", { RValue(Self), RValue("merchant_panel") });
+	g_PanelOpen = citizen.IsString() && citizen.ToString() == "blacksmith" && ToNumber(panel) == 0;
+	g_HasItem = g_PanelOpen && ReadSlotItem(Self, Other);
 	g_Recipes.clear();
 	if (!g_HasItem)
 		return;
@@ -544,6 +546,8 @@ static void Tick(CInstance* Self, CInstance* Other)
 		return;
 	}
 	Refresh(Self, Other);
+	if (!g_PanelOpen)
+		return Stop("the reforge panel was closed");
 	if (!g_HasItem)
 		return Stop("no single item found in the reforge slot");
 
