@@ -41,9 +41,11 @@ static int g_NewGoal = 0;
 static double g_NewAmount = 0;
 static bool g_AllStats = false;
 
-// The first five hold rolled stats; the last three hold a single stat with a plain value.
-static const char* TIER_CODES[] = { "N", "D", "M", "R", "E", "RP", "MA", "AT" };
-static const char* TIER_NAMES[] = { "Normal", "Defense", "Magic", "Rare", "Epic", "Reaper", "Mastery", "Attribute" };
+// The first five hold rolled stats; the next three hold a single stat with a plain value.
+// The last is the item's level, not a stat.
+static const char* TIER_CODES[] = { "N", "D", "M", "R", "E", "RP", "MA", "AT", "LV" };
+static const char* TIER_NAMES[] = { "Normal", "Defense", "Magic", "Rare", "Epic", "Reaper", "Mastery", "Attribute", "Item level" };
+constexpr int TIER_COUNT = 9;
 static const char* SPECIAL_GOAL_NAMES[] = { "Stat only", "Max roll", "Value at least" };
 static const char* GOAL_NAMES[] = { "Stat only", "Max roll", "Value at least", "Roll at least" };
 
@@ -54,7 +56,7 @@ void OverlaySetIniPath(const std::string& Path)
 
 const char* TierName(const std::string& Code)
 {
-	for (int i = 0; i < 8; i++)
+	for (int i = 0; i < TIER_COUNT; i++)
 		if (Code == TIER_CODES[i]) return TIER_NAMES[i];
 	return Code == "L" ? "Legendary" : Code.c_str();
 }
@@ -80,6 +82,7 @@ static ImVec4 TierColor(const std::string& Code, const std::string& Stat = "")
 	if (Code == "R") return { 23 / 255.0f, 106 / 255.0f, 177 / 255.0f, 1.0f };
 	if (Code == "E") return { 198 / 255.0f, 141 / 255.0f, 32 / 255.0f, 1.0f };
 	if (Code == "L") return { 206 / 255.0f, 70 / 255.0f, 7 / 255.0f, 1.0f };
+	if (Code == "LV") return ImGui::GetStyleColorVec4(ImGuiCol_Text);
 	return { 137 / 255.0f, 137 / 255.0f, 137 / 255.0f, 1.0f };
 }
 
@@ -98,6 +101,8 @@ static bool InPool(const StatInfo& Stat, const std::string& Tier)
 
 static std::string Describe(const Target& Target)
 {
+	if (IsLevelTier(Target.tier))
+		return "Item level: max level";
 	std::string text = std::string(TierName(Target.tier)) + ": " + StatName(Target.stat);
 	char amount[32];
 	snprintf(amount, sizeof(amount), "%g", Target.amount);
@@ -228,13 +233,13 @@ static bool DrawTargets()
 		ImGui::PopID();
 	}
 
-	ImGui::SetNextItemWidth(90);
+	ImGui::SetNextItemWidth(100);
 	ImGui::PushStyleColor(ImGuiCol_Text, TierColor(TIER_CODES[g_NewTier]));
 	bool tier_open = ImGui::BeginCombo("##tier", TIER_NAMES[g_NewTier]);
 	ImGui::PopStyleColor();
 	if (tier_open)
 	{
-		for (int i = 0; i < 8; i++)
+		for (int i = 0; i < TIER_COUNT; i++)
 		{
 			ImGui::PushStyleColor(ImGuiCol_Text, TierColor(TIER_CODES[i]));
 			if (ImGui::Selectable(TIER_NAMES[i], i == g_NewTier) && i != g_NewTier)
@@ -250,6 +255,25 @@ static bool DrawTargets()
 	ImGui::SetNextItemWidth(260);
 	std::string tier = TIER_CODES[g_NewTier];
 	bool special = IsSpecialTier(tier);
+	bool level = IsLevelTier(tier);
+	if (level)
+	{
+		// Nothing to choose: the item goes up to the hero's level.
+		ImGui::SetNextItemWidth(130);
+		int goal = 0;
+		static const char* names[] = { "Max level" };
+		ImGui::Combo("##goal", &goal, names, 1);
+		ImGui::SameLine();
+		if (ImGui::Button("Add target"))
+		{
+			Target target;
+			target.tier = tier;
+			target.stat = "level";
+			SetTarget(target);
+			changed = true;
+		}
+		return changed;
+	}
 	if (ImGui::BeginCombo("##stat", g_NewStat.empty() ? "choose a stat" : StatName(g_NewStat).c_str()))
 	{
 		if (special)
@@ -498,13 +522,16 @@ static bool DrawRunSettings()
 	for (const Recipe& recipe : g_Recipes)
 	{
 		bool reroll = recipe.type == 0 || recipe.type == 1;
-		bool add = recipe.type == 2 && g_AutoAdd;
-		if (!reroll && !add && !(recipe.type == 3 && g_AutoLock))
+		bool update = recipe.type == 2 && recipe.tier.empty();
+		bool add = recipe.type == 2 && g_AutoAdd && !update;
+		if (!reroll && !add && !update && !(recipe.type == 3 && g_AutoLock))
 			continue;
 		bool relevant = g_Targets.empty() && reroll;
 		for (const Target& target : g_Targets)
 		{
-			if (add)
+			if (update || IsLevelTier(target.tier))
+				relevant |= update && IsLevelTier(target.tier);
+			else if (add)
 			{
 				// An add for an earlier rarity also counts; the game chains them.
 				bool on_item = false;
@@ -637,8 +664,8 @@ static void DrawCosts()
 	{
 		for (const Recipe& recipe : g_Recipes)
 		{
-			// Reforge, lock and unlock; the mod does not apply the others.
-			if (recipe.type != 0 && recipe.type != 1 && recipe.type != 3)
+			// Reforge, lock, unlock and the level update; the adds are not listed.
+			if (recipe.type != 0 && recipe.type != 1 && recipe.type != 3 && !(recipe.type == 2 && recipe.tier.empty()))
 				continue;
 			std::string cost;
 			for (const auto& [id, count] : ParseCost(recipe.materials))

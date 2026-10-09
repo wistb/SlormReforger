@@ -125,6 +125,13 @@ inline bool IsSpecialTier(const std::string& Tier)
 {
 	return Tier == "RP" || Tier == "MA" || Tier == "AT";
 }
+// The "Update Item" recipe raises the item level; its target is tier "LV", stat "level".
+inline bool IsLevelTier(const std::string& Tier)
+{
+	return Tier == "LV";
+}
+// The game lists the recipe only while the item is below the hero's level.
+bool UpdateOffered();
 // Every stat a special tier can hold, as (ref, name).
 std::vector<std::pair<std::string, std::string>> SpecialStats(const std::string& Tier);
 

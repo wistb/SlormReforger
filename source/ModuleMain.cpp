@@ -361,9 +361,23 @@ int AddRank(const std::string& Tier)
 	return Tier == "M" ? 0 : Tier == "R" ? 1 : Tier == "E" ? 2 : -1;
 }
 
+// The only type 2 recipe without a tier code; the "Add" recipes all carry one.
+bool UpdateOffered()
+{
+	for (const Recipe& recipe : g_Recipes)
+		if (recipe.type == 2 && recipe.tier.empty()) return true;
+	return false;
+}
+
 // 0 met, 1 still to do, 2 cannot be reached by reforging.
 int TargetState(const Target& Target, std::string& Text)
 {
+	if (IsLevelTier(Target.tier))
+	{
+		bool offered = UpdateOffered();
+		Text = (offered ? "level " : "met, level ") + std::to_string(g_ItemLevel) + (offered ? ", will update" : "");
+		return offered ? 1 : 0;
+	}
 	const Affix* match = nullptr;
 	const Affix* elsewhere = nullptr;
 	int in_tier = 0, unlocked = 0;
@@ -446,6 +460,8 @@ static std::string g_LockTier, g_LockStat;
 static bool g_LockWanted = false;
 // Tier an "Add" recipe was applied for last step, checked on the next.
 static std::string g_AddTier;
+// Item level before an "Update Item" applied last step, 0 for none.
+static int g_LevelBefore = 0;
 
 static void Stop(const char* Reason)
 {
@@ -792,6 +808,13 @@ static void Tick(CInstance* Self, CInstance* Other)
 		if (!done)
 			return Stop((std::string("adding ") + TierName(tier) + " stats did not take effect").c_str());
 	}
+	if (g_LevelBefore > 0)
+	{
+		bool done = g_ItemLevel > g_LevelBefore;
+		g_LevelBefore = 0;
+		if (!done)
+			return Stop("updating the item level did not take effect");
+	}
 	// Stop on an unreachable target before paying for a lock.
 	for (const Target& target : g_RunTargets)
 	{
@@ -834,10 +857,22 @@ static void Tick(CInstance* Self, CInstance* Other)
 	// First unmet target decides the next reroll.
 	const Target* pending = nullptr;
 	int recipe_type = 0;
+	// The level comes before any reroll; it changes what the stats can roll.
+	bool level_up = false;
 	for (const Target& target : g_RunTargets)
 	{
-		if (lock_affix)
+		if (lock_affix || !IsLevelTier(target.tier) || !UpdateOffered())
+			continue;
+		pending = &target;
+		level_up = true;
+		break;
+	}
+	for (const Target& target : g_RunTargets)
+	{
+		if (lock_affix || level_up)
 			break;
+		if (IsLevelTier(target.tier))
+			continue;
 		const Affix* match = nullptr;
 		for (const Affix& affix : g_Item)
 			if (affix.tier == target.tier && affix.stat == target.stat) match = &affix;
@@ -870,7 +905,9 @@ static void Tick(CInstance* Self, CInstance* Other)
 
 	// The game offers one "Add" at a time, so an earlier rarity may have to come first.
 	std::string add_tier;
-	if (!lock_affix && recipe_type == 2)
+	if (level_up)
+		recipe = FindRecipe(Self, 2, "");
+	else if (!lock_affix && recipe_type == 2)
 	{
 		if (IsSpecialTier(pending->tier))
 		{
@@ -920,6 +957,7 @@ static void Tick(CInstance* Self, CInstance* Other)
 		g_LockWanted = !unlock;
 	}
 	g_AddTier = add_tier;
+	g_LevelBefore = level_up ? g_ItemLevel : 0;
 	RValue* arguments[1] = { &argument };
 	Log("applying recipe %d%s", recipe, lock_affix ? " (lock)" : "");
 	g_Apply(Self, Other, result, lock_affix ? 1 : 0, arguments);
@@ -932,6 +970,8 @@ static void Tick(CInstance* Self, CInstance* Other)
 
 	if (lock_affix)
 		Note("%d: %s %s", g_Attempts, unlock ? "unlock" : "lock", StatName(lock_affix->stat).c_str());
+	else if (level_up)
+		Note("%d: update item level from %d", g_Attempts, g_ItemLevel);
 	else if (!add_tier.empty())
 		Note("%d: add %s stats for %s", g_Attempts, TierName(add_tier), StatName(pending->stat).c_str());
 	else
