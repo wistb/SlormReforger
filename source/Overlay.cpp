@@ -13,6 +13,24 @@ static ID3D11DeviceContext* g_Context = nullptr;
 static std::string g_IniPath;
 static HWND g_Window = nullptr;
 static WNDPROC g_OriginalProc = nullptr;
+// Latched once per frame so the game sees a steady answer.
+static bool g_HideMouse = false;
+using CursorFn = BOOL(WINAPI*)(LPPOINT);
+static CursorFn g_OriginalCursor = nullptr;
+
+static BOOL RealCursor(LPPOINT Point)
+{
+	return g_OriginalCursor ? g_OriginalCursor(Point) : GetCursorPos(Point);
+}
+
+// While the cursor is over the overlay, the game is told it is off screen, so nothing behind it hovers.
+static BOOL WINAPI HookedCursor(LPPOINT Point)
+{
+	BOOL ok = g_OriginalCursor(Point);
+	if (ok && Point && g_HideMouse)
+		Point->x = Point->y = -20000;
+	return ok;
+}
 static LRESULT CALLBACK WindowProc(HWND Window, UINT Message, WPARAM WParam, LPARAM LParam);
 
 // Target being composed in the "add" row.
@@ -356,7 +374,10 @@ static void Frame(IDXGISwapChain* swapchain, UINT flags)
 	}
 
 	if (!g_Visible || !g_HasItem)
+	{
+		g_HideMouse = false;
 		return;
+	}
 
 	ID3D11Texture2D* buffer = nullptr;
 	ID3D11RenderTargetView* view = nullptr;
@@ -369,6 +390,7 @@ static void Frame(IDXGISwapChain* swapchain, UINT flags)
 	if (FAILED(created))
 		return;
 
+	g_HideMouse = false;
 	ImGui_ImplDX11_NewFrame();
 	ImGui_ImplWin32_NewFrame();
 
@@ -378,7 +400,7 @@ static void Frame(IDXGISwapChain* swapchain, UINT flags)
 	RECT client = {};
 	POINT cursor = {};
 	GetClientRect(g_Window, &client);
-	GetCursorPos(&cursor);
+	RealCursor(&cursor);
 	ScreenToClient(g_Window, &cursor);
 	io.DisplaySize = { static_cast<float>(size.Width), static_cast<float>(size.Height) };
 	static bool logged = false;
@@ -398,6 +420,7 @@ static void Frame(IDXGISwapChain* swapchain, UINT flags)
 	ImGui::GetIO().MouseDrawCursor = ImGui::GetIO().WantCaptureMouse;
 	DrawWindow();
 	ImGui::Render();
+	g_HideMouse = io.WantCaptureMouse;
 
 	ID3D11RenderTargetView* old_view = nullptr;
 	ID3D11DepthStencilView* old_depth = nullptr;
@@ -445,7 +468,7 @@ static LRESULT CALLBACK WindowProc(HWND Window, UINT Message, WPARAM WParam, LPA
 		}
 
 		// Keep clicks and typing on the overlay away from the game.
-		if ((mouse && Message != WM_MOUSEMOVE && io.WantCaptureMouse) || (keyboard && io.WantTextInput))
+		if ((mouse && io.WantCaptureMouse) || (keyboard && io.WantTextInput))
 			return 0;
 	}
 	return CallWindowProcW(g_OriginalProc, Window, Message, WParam, LParam);
@@ -482,5 +505,11 @@ bool OverlayInstall(YYTKInterface* Yytk)
 		return false;
 	PVOID* table = *reinterpret_cast<PVOID**>(swapchain);
 	Aurie::AurieStatus status = Aurie::MmCreateHook(Aurie::g_ArSelfModule, "SlormReforger Present", table[8], HookedPresent, reinterpret_cast<PVOID*>(&g_OriginalPresent));
-	return Aurie::AurieSuccess(status) && g_OriginalPresent;
+	if (!Aurie::AurieSuccess(status) || !g_OriginalPresent)
+		return false;
+
+	status = Aurie::MmCreateHook(Aurie::g_ArSelfModule, "SlormReforger GetCursorPos", GetCursorPos, HookedCursor, reinterpret_cast<PVOID*>(&g_OriginalCursor));
+	if (!Aurie::AurieSuccess(status))
+		Aurie::DbgPrintEx(Aurie::LOG_SEVERITY_WARNING, "[SlormReforger] cursor hook failed: %s", Aurie::AurieStatusToString(status));
+	return true;
 }
