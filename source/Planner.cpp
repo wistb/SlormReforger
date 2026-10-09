@@ -169,11 +169,20 @@ bool ParsePreset(const std::string& Text, Preset& Out, std::string& Error)
 		int attribute = reader.Take(4), attribute_value = reader.Take(2);
 		int smith = reader.Take(4), smith_value = reader.Take(3);
 		int skill = reader.Take(4), skill_value = reader.Take(3);
-		slot.legendary = reader.Take(10) > 0;
-		reader.Take(8);
+		slot.legendary = reader.Take(10) - 1;
+		int legendary_value = reader.Take(8);
 		AddSpecial(slot, "RP", smith, smith_value);
 		AddSpecial(slot, "MA", skill, skill_value);
 		AddSpecial(slot, "AT", attribute, attribute_value);
+		if (slot.legendary >= 0)
+		{
+			Target target;
+			target.tier = "L";
+			target.stat = "leg_" + std::to_string(slot.legendary);
+			target.goal = legendary_value >= 100 ? Goal::MaxRoll : Goal::Roll;
+			target.amount = legendary_value;
+			slot.targets.push_back(target);
+		}
 		Out.slots.push_back(std::move(slot));
 	}
 	if (reader.overrun || Out.slots.empty())

@@ -1,4 +1,5 @@
 #include "Reforger.hpp"
+#include <algorithm>
 #include <fstream>
 #include <sstream>
 
@@ -8,6 +9,15 @@ std::vector<StatInfo> g_Stats;
 int g_HeroClass = 0;
 
 static std::map<int, std::string> g_Smiths, g_Traits, g_Skills[3];
+struct Legendary
+{
+	std::string name;
+	std::string slot;
+	// -1 any class, 0-2 one class; the game also uses 99 and 999.
+	int hero = -1;
+	bool lootable = true;
+};
+static std::map<int, Legendary> g_Legendaries;
 
 using Row = std::map<std::string, std::string>;
 
@@ -177,6 +187,20 @@ void LoadGameData()
 			catch (...) {}
 		}
 	}
+	for (Row& row : LoadTable(game / "dat_leg.json"))
+	{
+		try
+		{
+			Legendary legendary;
+			legendary.name = row["EN_NAME"];
+			legendary.slot = Lower(row["ITEM"]);
+			legendary.lootable = Lower(row["LOOTABLE"]) != "false" && row["LOOTABLE"] != "0";
+			try { legendary.hero = std::stoi(row["HERO"]); }
+			catch (...) {}
+			g_Legendaries[std::stoi(row["REF"])] = legendary;
+		}
+		catch (...) {}
+	}
 	g_Stats.clear();
 	for (Row& row : LoadTable(game / "dat_sta.json"))
 	{
@@ -201,9 +225,31 @@ const StatInfo* FindStat(const std::string& Ref)
 	return nullptr;
 }
 
+std::string LegendaryName(int Id)
+{
+	auto found = g_Legendaries.find(Id);
+	return found != g_Legendaries.end() && !found->second.name.empty() ? found->second.name : "legendary " + std::to_string(Id);
+}
+
 std::vector<std::pair<std::string, std::string>> SpecialStats(const std::string& Tier, int Hero)
 {
 	if (Hero < 0) Hero = g_HeroClass;
+	if (IsLegendaryTier(Tier))
+	{
+		// Another class's legendaries cannot roll; without an item every slot is listed.
+		std::vector<std::pair<std::string, std::string>> legendaries;
+		std::string slot = g_HasItem ? Lower(g_ItemSlot) : "";
+		for (const auto& [id, legendary] : g_Legendaries)
+		{
+			if (!legendary.lootable || (!slot.empty() && legendary.slot != slot))
+				continue;
+			if (legendary.hero >= 0 && legendary.hero <= 2 && legendary.hero != Hero)
+				continue;
+			legendaries.emplace_back("leg_" + std::to_string(id), legendary.name);
+		}
+		std::sort(legendaries.begin(), legendaries.end(), [](const auto& a, const auto& b) { return a.second < b.second; });
+		return legendaries;
+	}
 	std::vector<std::pair<std::string, std::string>> out;
 	const std::map<int, std::string>& names = Tier == "RP" ? g_Smiths : Tier == "AT" ? g_Traits : g_Skills[Hero >= 0 && Hero < 3 ? Hero : 0];
 	const char* suffix = Tier == "RP" ? " Affinity" : Tier == "MA" ? " Mastery" : "";
@@ -214,6 +260,11 @@ std::vector<std::pair<std::string, std::string>> SpecialStats(const std::string&
 
 std::string StatName(const std::string& Ref, int Hero)
 {
+	if (Ref.rfind("leg_", 0) == 0)
+	{
+		try { return LegendaryName(std::stoi(Ref.substr(4))); }
+		catch (...) { return Ref; }
+	}
 	if (Ref.size() > 3 && Ref[2] == '_')
 	{
 		std::string tier = Ref.substr(0, 2);

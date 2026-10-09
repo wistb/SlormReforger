@@ -116,6 +116,18 @@ static bool ReadItem(const RValue& Item, std::vector<Affix>& Out)
 			Out.push_back(affix);
 			continue;
 		}
+		if (fields.size() >= 4 && fields[0].IsString() && IsLegendaryTier(fields[0].ToString()))
+		{
+			Affix affix;
+			affix.tier = "L";
+			affix.stat = "leg_" + std::to_string(static_cast<int>(ToNumber(fields[1])));
+			affix.roll = affix.shown = ToNumber(fields[2]);
+			affix.has_shown = true;
+			affix.locked = ToNumber(fields[3]) != 0;
+			affix.index = static_cast<int>(i);
+			Out.push_back(affix);
+			continue;
+		}
 		if (fields.size() < 5 || !fields[0].IsString() || !fields[1].IsString())
 			continue;
 		Affix affix;
@@ -205,7 +217,7 @@ static bool ReadSlotItem(CInstance* Self, CInstance* Other)
 	for (Affix& affix : g_Item)
 	{
 		size_t i = static_cast<size_t>(affix.index);
-		if (IsSpecialTier(affix.tier) || i >= parts.size() || !parts[i].IsArray())
+		if (IsSpecialTier(affix.tier) || IsLegendaryTier(affix.tier) || i >= parts.size() || !parts[i].IsArray())
 			continue;
 		std::vector<RValue> fields = parts[i].ToVector();
 		if (fields.size() < 5)
@@ -357,6 +369,8 @@ double MaxRoll(const std::string& Tier, const std::string& Stat)
 	// Fixed value ranges: reaper 1-5, mastery 1-2, attribute 1-3.
 	if (IsSpecialTier(Tier))
 		return Tier == "RP" ? 5 : Tier == "MA" ? 2 : 3;
+	if (IsLegendaryTier(Tier))
+		return 100;
 	if (const PoolEntry* entry = FindInPool(Tier, Stat))
 		return entry->max;
 
@@ -368,9 +382,16 @@ double MaxRoll(const std::string& Tier, const std::string& Stat)
 	return base * step / 5;
 }
 
+// Legendary on the item that the game offers no score reroll for, "" for none.
+// Only an unlocked one tells: while it is locked the game lists just the unlock.
+static std::string g_FixedLegendary;
+
 static bool Met(const Target& Target, const Affix& Affix)
 {
-	if (IsSpecialTier(Target.tier))
+	// A legendary without a range has no score to improve; having it is all there is.
+	if (IsLegendaryTier(Target.tier) && Target.stat == g_FixedLegendary)
+		return true;
+	if (IsSpecialTier(Target.tier) || IsLegendaryTier(Target.tier))
 		return Target.goal == Goal::Any || Affix.roll >= (Target.goal == Goal::MaxRoll ? MaxRoll(Target.tier, Target.stat) : Target.amount);
 	switch (Target.goal)
 	{
@@ -474,6 +495,18 @@ int TargetState(const Target& Target, std::string& Text)
 		Text += elsewhere->locked ? ", will unlock and move" : ", will move";
 		return 1;
 	}
+	// The game lists no outcomes for legendaries; go by the ones made for the gear slot and class.
+	if (IsLegendaryTier(Target.tier))
+	{
+		bool listed = false;
+		for (const auto& [ref, name] : SpecialStats("L"))
+			if (ref == Target.stat) listed = true;
+		if (!listed)
+		{
+			Text = "not a legendary for this item";
+			return 2;
+		}
+	}
 	auto pool = g_Pools.find(Target.tier);
 	if (pool != g_Pools.end() && !pool->second.empty() && !FindInPool(Target.tier, Target.stat))
 	{
@@ -499,7 +532,7 @@ int TargetState(const Target& Target, std::string& Text)
 	if (in_tier == 0)
 	{
 		Text = std::string("no ") + TierName(Target.tier) + " stat on item";
-		if (!g_AutoAdd || (AddRank(Target.tier) < 0 && !IsSpecialTier(Target.tier)))
+		if (!g_AutoAdd || (AddRank(Target.tier) < 0 && !IsSpecialTier(Target.tier) && !IsLegendaryTier(Target.tier)))
 			return 2;
 		Text += ", will add";
 		return 1;
@@ -518,7 +551,7 @@ int TargetState(const Target& Target, std::string& Text)
 		return 1;
 	}
 	int possible = 0;
-	if (IsSpecialTier(Target.tier))
+	if (IsSpecialTier(Target.tier) || IsLegendaryTier(Target.tier))
 		possible = static_cast<int>(SpecialStats(Target.tier).size()) - 1;
 	if (pool != g_Pools.end())
 		for (const PoolEntry& entry : pool->second) possible += entry.on_item ? 0 : 1;
@@ -834,10 +867,12 @@ static int FindLockRecipe(CInstance* Ui, const Affix& Affix, bool Unlock, double
 {
 	RValue recipes = g_Yytk->CallBuiltin("variable_instance_get", { RValue(Ui), RValue("blacksmith_recipes") });
 	const StatInfo* stat = FindStat(Affix.stat);
-	if (!recipes.IsArray() || !stat)
+	// A legendary has no stat row, and its tier has only the one lock.
+	bool legendary = IsLegendaryTier(Affix.tier);
+	if (!recipes.IsArray() || (!stat && !legendary))
 		return -1;
 
-	std::string ending = " " + stat->label + "}";
+	std::string ending = legendary ? "" : " " + stat->label + "}";
 	std::string code(1, static_cast<char>(std::tolower(Affix.tier[0])));
 	int found = -1;
 	std::vector<RValue> list = recipes.ToVector();
@@ -942,6 +977,23 @@ static void Refresh(CInstance* Self, CInstance* Other)
 		}
 	}
 
+	bool score_reroll = false;
+	for (const Recipe& recipe : g_Recipes)
+		if (recipe.type == 0 && recipe.tier == "l") score_reroll = true;
+	bool legendary = false;
+	for (const Affix& affix : g_Item)
+	{
+		if (!IsLegendaryTier(affix.tier))
+			continue;
+		legendary = true;
+		if (!affix.locked)
+			g_FixedLegendary = score_reroll ? "" : affix.stat;
+		else if (g_FixedLegendary != affix.stat)
+			g_FixedLegendary.clear();
+	}
+	if (!legendary)
+		g_FixedLegendary.clear();
+
 	// Only ask about materials the listed recipes use.
 	for (const Recipe& recipe : g_Recipes)
 		for (const auto& [id, count] : ParseCost(recipe.materials))
@@ -963,7 +1015,7 @@ static void Start(CInstance* Self, CInstance* Other)
 	{
 		for (size_t j = i + 1; j < g_RunTargets.size(); j++)
 		{
-			if (!IsSpecialTier(g_RunTargets[i].tier) || g_RunTargets[i].tier != g_RunTargets[j].tier)
+			if ((!IsSpecialTier(g_RunTargets[i].tier) && !IsLegendaryTier(g_RunTargets[i].tier)) || g_RunTargets[i].tier != g_RunTargets[j].tier)
 				continue;
 			g_Status = std::string("only one ") + TierName(g_RunTargets[i].tier) + " target is possible, remove the other";
 			Note("%s", g_Status.c_str());
@@ -1238,7 +1290,7 @@ static void Tick(CInstance* Self, CInstance* Other)
 		recipe = FindRecipe(Self, 2, "");
 	else if (!lock_affix && recipe_type == 2)
 	{
-		if (IsSpecialTier(pending->tier))
+		if (IsSpecialTier(pending->tier) || IsLegendaryTier(pending->tier))
 		{
 			recipe = FindRecipe(Self, 2, pending->tier);
 			add_tier = pending->tier;

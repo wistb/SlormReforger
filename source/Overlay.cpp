@@ -43,9 +43,9 @@ static bool g_AllStats = false;
 
 // The first five hold rolled stats; the next three hold a single stat with a plain value.
 // The last is the item's level, not a stat.
-static const char* TIER_CODES[] = { "N", "D", "M", "R", "E", "RP", "MA", "AT", "LV" };
-static const char* TIER_NAMES[] = { "Normal", "Defense", "Magic", "Rare", "Epic", "Reaper", "Mastery", "Attribute", "Item level" };
-constexpr int TIER_COUNT = 9;
+static const char* TIER_CODES[] = { "N", "D", "M", "R", "E", "RP", "MA", "AT", "L", "LV" };
+static const char* TIER_NAMES[] = { "Normal", "Defense", "Magic", "Rare", "Epic", "Reaper", "Mastery", "Attribute", "Legendary", "Item level" };
+constexpr int TIER_COUNT = 10;
 static const char* SPECIAL_GOAL_NAMES[] = { "Stat only", "Max roll", "Value at least" };
 static const char* GOAL_NAMES[] = { "Stat only", "Max roll", "Value at least", "Roll at least" };
 
@@ -125,7 +125,7 @@ static void SetTarget(const Target& New)
 	for (Target& target : g_Targets)
 	{
 		// An item holds one reaper, mastery and attribute stat, so a new target replaces the old.
-		if (target.tier == New.tier && (target.stat == New.stat || IsSpecialTier(New.tier)))
+		if (target.tier == New.tier && (target.stat == New.stat || IsSpecialTier(New.tier) || IsLegendaryTier(New.tier)))
 		{
 			target = New;
 			return;
@@ -161,7 +161,7 @@ static bool DrawItem()
 			ImGui::TableNextColumn();
 			ImGui::TextColored(TierColor(affix.tier), "%s", TierName(affix.tier));
 			ImGui::TableNextColumn();
-			if (IsSpecialTier(affix.tier))
+			if (IsSpecialTier(affix.tier) || IsLegendaryTier(affix.tier))
 				ImGui::TextColored(TierColor(affix.tier, affix.stat), "%s", StatName(affix.stat).c_str());
 			else
 				ImGui::TextUnformatted(StatName(affix.stat).c_str());
@@ -344,8 +344,8 @@ static bool DrawPresets()
 		{
 			for (const Target& target : slot.targets)
 				ImGui::TextColored(TierColor(target.tier, target.stat), "%s", Describe(target, preset.hero).c_str());
-			if (slot.legendary)
-				ImGui::TextDisabled("Legendary effect: not imported, it cannot be targeted.");
+			if (slot.legendary >= 0)
+				ImGui::TextDisabled("Legendaries cannot be checked against the game's own list of outcomes.");
 			ImGui::TreePop();
 		}
 		ImGui::PopID();
@@ -423,7 +423,8 @@ static bool DrawTargets()
 	ImGui::SameLine();
 	ImGui::SetNextItemWidth(260);
 	std::string tier = TIER_CODES[g_NewTier];
-	bool special = IsSpecialTier(tier);
+	// Tiers with their own stat list and plain values.
+	bool special = IsSpecialTier(tier) || IsLegendaryTier(tier);
 	bool level = IsLevelTier(tier);
 	if (level)
 	{

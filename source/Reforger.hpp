@@ -49,8 +49,8 @@ struct PresetSlot
 	std::string label;
 	int level = 0;
 	std::vector<Target> targets;
-	// The build has a legendary effect here; those cannot be targeted.
-	bool legendary = false;
+	// The build's legendary effect, -1 for none.
+	int legendary = -1;
 };
 
 // A build imported from a slorm-planner link.
@@ -179,7 +179,13 @@ inline bool IsLevelTier(const std::string& Tier)
 }
 // The game lists the recipe only while the item is below the hero's level.
 bool UpdateOffered();
-// Every stat a special tier can hold, as (ref, name).
+// The legendary effect: one per item, stored as ["L", id, roll, locked]; its stat ref is "leg_87".
+// Unlike the special tiers it has a score reroll and a lock.
+inline bool IsLegendaryTier(const std::string& Tier)
+{
+	return Tier == "L";
+}
+// Every stat a special tier can hold, as (ref, name). For "L", the legendaries of the slotted item's gear slot.
 // Mastery names are per class: Hero picks one, -1 means the hero whose item is in the slot.
 std::vector<std::pair<std::string, std::string>> SpecialStats(const std::string& Tier, int Hero = -1);
 
@@ -201,6 +207,7 @@ const char* HeroName(int Class);
 void LoadGameData();
 const StatInfo* FindStat(const std::string& Ref);
 std::string StatName(const std::string& Ref, int Hero = -1);
+std::string LegendaryName(int Id);
 
 bool OverlayInstall(YYTK::YYTKInterface* Yytk);
 bool OverlayWantsMouse();
