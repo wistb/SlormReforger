@@ -25,6 +25,15 @@ jobs:
           echo "ZIP=$(ls SlormReforger-*.zip)" >> "$GITHUB_ENV"
           echo "VERSION=${TAG#v}" >> "$GITHUB_ENV"
 
+      # The release notes are a bullet list; Nexus gets the lines without the dashes.
+      - name: Read the changelog
+        run: |
+          {
+            echo "CHANGELOG<<CHANGELOG_END"
+            gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json body --jq .body | tr -d '\r' | sed 's/^- //'
+            echo "CHANGELOG_END"
+          } >> "$GITHUB_ENV"
+
       # v1.0.0-beta.10
       - name: Upload to Nexus Mods
         uses: Nexus-Mods/upload-action@c96019556046053aa26044b44396cd38929daf23
@@ -36,3 +45,5 @@ jobs:
           display_name: SlormReforger
           archive_existing_version: true
           update_mod_version: true
+          mod_id: ${{ vars.NEXUS_MOD_ID }}
+          changelog: ${{ env.CHANGELOG }}
