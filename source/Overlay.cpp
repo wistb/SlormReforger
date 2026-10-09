@@ -308,6 +308,23 @@ static int PressedKey()
 	return 0;
 }
 
+// About links. An empty address shows the name greyed out until there is a page to point at.
+static const char* LINK_AUTHOR = "https://discord.com/users/187106829984202761";
+static const char* LINK_NEXUS = "";
+static const char* LINK_GITHUB = "";
+
+static void Link(const char* Label, const char* Url)
+{
+	if (Url[0])
+	{
+		ImGui::TextLinkOpenURL(Label, Url);
+		return;
+	}
+	ImGui::BeginDisabled();
+	ImGui::TextLink(Label);
+	ImGui::EndDisabled();
+}
+
 static const char* THEME_NAMES[] = { "Dark", "Light", "Classic", "Slormancer" };
 
 // Colours every preset derives from one accent.
@@ -522,7 +539,12 @@ static bool DrawOptions()
 	}
 
 	ImGui::SeparatorText("About");
-	ImGui::TextUnformatted("SlormReforger v" SLORMREFORGER_VERSION " by Crash");
+	ImGui::TextUnformatted("SlormReforger v" SLORMREFORGER_VERSION " by");
+	ImGui::SameLine();
+	Link("Crash", LINK_AUTHOR);
+	Link("Nexus Mods", LINK_NEXUS);
+	ImGui::SameLine();
+	Link("GitHub", LINK_GITHUB);
 	return changed || restyle;
 }
 
@@ -576,13 +598,14 @@ static void DrawRun()
 			g_WantStart = true;
 		ImGui::EndDisabled();
 		ImGui::SameLine();
-		ImGui::TextUnformatted(g_Status.c_str());
+		ImGui::TextWrapped("%s", g_Status.c_str());
 	}
 
+	// Long lines wrap; the box never scrolls sideways.
 	if (!g_Notes.empty() && ImGui::BeginChild("notes", { 0, 110 * g_Appearance.scale }, ImGuiChildFlags_Borders))
 	{
 		for (const std::string& note : g_Notes)
-			ImGui::TextUnformatted(note.c_str());
+			ImGui::TextWrapped("%s", note.c_str());
 		if (g_Running)
 			ImGui::SetScrollHereY(1.0f);
 	}

@@ -502,9 +502,14 @@ static bool CanAfford(CInstance* Self, CInstance* Other, int Recipe, std::string
 	for (const auto& [id, count] : cost)
 	{
 		double stock = MaterialStock(Self, Other, id);
+		if (stock < count)
+		{
+			Why = std::string("out of ") + MaterialName(id);
+			return false;
+		}
 		if (stock - count < g_MinStock[id])
 		{
-			Why = std::string("not enough ") + MaterialName(id) + " (have " + std::to_string(static_cast<long long>(stock)) + ", keeping " + std::to_string(g_MinStock[id]) + ")";
+			Why = std::string(MaterialName(id)) + " limit reached (have " + std::to_string(static_cast<long long>(stock)) + ", keeping " + std::to_string(g_MinStock[id]) + ")";
 			return false;
 		}
 	}
