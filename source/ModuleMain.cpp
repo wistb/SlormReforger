@@ -497,6 +497,20 @@ static int FindRecipe(CInstance* Ui, int Type, const std::string& Tier)
 	return -1;
 }
 
+#ifdef SLORM_DEV
+const char* SlormiteName(int Id)
+{
+	static const char* names[] = {
+		"Incomplete Inferior Slormite", "Inferior Slormite Chunk", "Inferior Flawless Slormite",
+		"Incomplete Modest Slormite", "Modest Slormite Chunk", "Modest Flawless Slormite",
+		"Incomplete Greater Slormite", "Greater Slormite Chunk", "Greater Flawless Slormite",
+		"Incomplete Superior Slormite", "Superior Slormite Chunk", "Superior Flawless Slormite",
+		"Incomplete Ancestral Slormite", "Ancestral Slormite Chunk", "Ancestral Flawless Slormite",
+	};
+	return Id >= 1 && Id <= SLORMITE_COUNT ? names[Id - 1] : "unknown slormite";
+}
+#endif
+
 const char* MaterialName(int Id)
 {
 	static const char* names[] = {
@@ -516,6 +530,140 @@ static double MaterialStock(CInstance* Self, CInstance* Other, int Id)
 	g_CurrencySpend(Self, Other, count, 4, pointers);
 	return ToNumber(count);
 }
+
+#ifdef SLORM_DEV
+int g_GrantId = -1;
+int g_GrantAmount = 0;
+std::string g_GrantResult;
+
+double g_SlormiteStock[SLORMITE_COUNT] = {};
+
+// Stacks are items shaped [["trash", tier, id, kind, count, ...]]. Slormites are tier 1, ids 1-15, in slots 75-89.
+static bool IsStack(const RValue& Slot, int Tier, int Id, RValue& Header)
+{
+	if (!Slot.IsArray() || ToNumber(g_Yytk->CallBuiltin("array_length", { Slot })) < 1)
+		return false;
+	Header = g_Yytk->CallBuiltin("array_get", { Slot, RValue(0.0) });
+	if (!Header.IsArray())
+		return false;
+	std::vector<RValue> fields = Header.ToVector();
+	return fields.size() >= 5 && fields[0].IsString() && fields[0].ToString() == "trash" && fields[3].IsString() && fields[3].ToString() == "slormite"
+		&& ToNumber(fields[1]) == Tier && ToNumber(fields[2]) == Id;
+}
+
+// Hero whose inventory holds the stacks: the one with Normal Slormeline in slot 90.
+static bool StackHero(RValue& Hero)
+{
+	RValue inventory = g_Yytk->CallBuiltin("variable_global_get", { RValue("inventory") });
+	if (!inventory.IsArray())
+		return false;
+	for (const RValue& hero : inventory.ToVector())
+	{
+		if (!hero.IsArray() || ToNumber(g_Yytk->CallBuiltin("array_length", { hero })) <= 112)
+			continue;
+		RValue header;
+		if (IsStack(g_Yytk->CallBuiltin("array_get", { hero, RValue(90.0) }), 0, 0, header))
+		{
+			Hero = hero;
+			return true;
+		}
+	}
+	return false;
+}
+
+static double SlormiteStock(int Id)
+{
+	RValue hero, header;
+	if (!StackHero(hero) || !IsStack(g_Yytk->CallBuiltin("array_get", { hero, RValue(74.0 + Id) }), 1, Id, header))
+		return 0;
+	return ToNumber(g_Yytk->CallBuiltin("array_get", { header, RValue(4.0) }));
+}
+
+// Sets the count, creating the stack when the slot is empty.
+static bool SetSlormite(int Id, double Count)
+{
+	RValue hero, header;
+	if (!StackHero(hero))
+		return false;
+	RValue text(std::to_string(static_cast<long long>(Count)));
+	RValue slot = g_Yytk->CallBuiltin("array_get", { hero, RValue(74.0 + Id) });
+	if (IsStack(slot, 1, Id, header))
+	{
+		g_Yytk->CallBuiltin("array_set", { header, RValue(4.0), text });
+		return true;
+	}
+	// Anything else in the slot is left alone.
+	if (slot.IsArray() && ToNumber(g_Yytk->CallBuiltin("array_length", { slot })) > 0)
+		return false;
+	const std::string fields[8] = { "trash", "1", std::to_string(Id), "slormite", text.ToString(), "0", "0", "normal" };
+	header = g_Yytk->CallBuiltin("array_create", { RValue(8.0) });
+	for (int i = 0; i < 8; i++)
+		g_Yytk->CallBuiltin("array_set", { header, RValue(static_cast<double>(i)), RValue(fields[i]) });
+	RValue item = g_Yytk->CallBuiltin("array_create", { RValue(1.0) });
+	g_Yytk->CallBuiltin("array_set", { item, RValue(0.0), header });
+	g_Yytk->CallBuiltin("array_set", { hero, RValue(74.0 + Id), item });
+	return true;
+}
+
+// Sets the count on a slormeline or slormandrite stack. Returns false when there is no stack.
+static bool WriteStack(int Id, double Count)
+{
+	RValue hero, header;
+	if (!StackHero(hero))
+		return false;
+	for (int s = 90; s <= 112; s++)
+	{
+		if (!IsStack(g_Yytk->CallBuiltin("array_get", { hero, RValue(static_cast<double>(s)) }), 0, Id, header))
+			continue;
+		g_Yytk->CallBuiltin("array_set", { header, RValue(4.0), RValue(std::to_string(static_cast<long long>(Count))) });
+		return true;
+	}
+	return false;
+}
+
+static void Grant(CInstance* Self, CInstance* Other, int Id, int Amount)
+{
+	char text[160];
+	// One past the materials is goldus.
+	if (Id == MATERIAL_COUNT)
+	{
+		double gold = ToNumber(g_Yytk->CallBuiltin("variable_global_get", { RValue("gold") }));
+		g_Yytk->CallBuiltin("variable_global_set", { RValue("gold"), RValue(gold + Amount) });
+		g_Gold = ToNumber(g_Yytk->CallBuiltin("variable_global_get", { RValue("gold") }));
+		snprintf(text, sizeof(text), "Goldus: %.0f -> %.0f", gold, g_Gold);
+		g_GrantResult = text;
+		Log("dev: %s", text);
+		return;
+	}
+	// Past goldus come the slormites, ids 1-15.
+	if (Id > MATERIAL_COUNT)
+	{
+		int slormite = Id - MATERIAL_COUNT;
+		double before = SlormiteStock(slormite);
+		bool written = SetSlormite(slormite, before + Amount);
+		snprintf(text, sizeof(text), "%s: %.0f -> %.0f%s", SlormiteName(slormite), before, SlormiteStock(slormite), written ? "" : " (slot not usable)");
+		g_GrantResult = text;
+		Log("dev: %s", text);
+		return;
+	}
+	double before = MaterialStock(Self, Other, Id);
+	// A negative spend adds, if the game does not clamp it.
+	RValue arguments[4] = { RValue(static_cast<double>(Id)), RValue(static_cast<double>(-Amount)), RValue(0.0), RValue("slormite") };
+	RValue* pointers[4] = { &arguments[0], &arguments[1], &arguments[2], &arguments[3] };
+	RValue result;
+	g_CurrencySpend(Self, Other, result, 4, pointers);
+	double after = MaterialStock(Self, Other, Id);
+	const char* how = "negative spend";
+	if (after != before + Amount)
+	{
+		how = WriteStack(Id, before + Amount) ? "stack write" : "no stack found";
+		after = MaterialStock(Self, Other, Id);
+	}
+	snprintf(text, sizeof(text), "%s: %.0f -> %.0f (%s)", MaterialName(Id), before, after, how);
+	g_GrantResult = text;
+	Log("dev: %s", text);
+}
+#endif
 
 // Cost spec: parts joined by '|', each "material" (one) or "material*count".
 std::vector<std::pair<int, int>> ParseCost(const std::string& Spec)
@@ -756,6 +904,20 @@ static void Tick(CInstance* Self, CInstance* Other)
 	if (g_WantStart && !g_Running)
 		Start(Self, Other);
 	g_WantStart = g_WantStop = false;
+
+#ifdef SLORM_DEV
+	if (g_GrantId >= 0 && !g_Running)
+		Grant(Self, Other, g_GrantId, g_GrantAmount);
+	g_GrantId = -1;
+	if (g_Visible && !g_Running)
+	{
+		for (int id = 0; id < MATERIAL_COUNT; id++)
+			g_Stock[id] = MaterialStock(Self, Other, id);
+		g_Gold = ToNumber(g_Yytk->CallBuiltin("variable_global_get", { RValue("gold") }));
+		for (int id = 1; id <= SLORMITE_COUNT; id++)
+			g_SlormiteStock[id - 1] = SlormiteStock(id);
+	}
+#endif
 
 	if (!g_Running)
 	{

@@ -571,6 +571,62 @@ static bool DrawRunSettings()
 	return changed;
 }
 
+#ifdef SLORM_DEV
+// Id MATERIAL_COUNT is goldus.
+static void DrawGrantRow(int Id)
+{
+	static int amounts[MATERIAL_COUNT + 1 + SLORMITE_COUNT] = { 10000, 10000, 10000, 10000, 10000, 10000, 10000, 10000, 10000, 10000, 10000, 1000000,
+		1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000 };
+	bool gold = Id == MATERIAL_COUNT;
+	int slormite = Id - MATERIAL_COUNT;
+	ImGui::PushID(Id);
+	ImGui::SetNextItemWidth(140);
+	ImGui::InputInt("##amount", &amounts[Id], gold ? 100000 : 100, gold ? 1000000 : 1000);
+	ImGui::SameLine();
+	if (ImGui::Button("Add") && amounts[Id] > 0)
+	{
+		g_GrantId = Id;
+		g_GrantAmount = amounts[Id];
+	}
+	ImGui::SameLine();
+	ImGui::Text("%s", gold ? "Goldus" : slormite > 0 ? SlormiteName(slormite) : MaterialName(Id));
+	ImGui::SameLine();
+	ImGui::TextDisabled("have %.0f", gold ? g_Gold : slormite > 0 ? g_SlormiteStock[slormite - 1] : g_Stock[Id]);
+	ImGui::PopID();
+}
+
+static void DrawDev()
+{
+	ImGui::TextDisabled("Dev build. Adds to the save.");
+	if (ImGui::BeginTabBar("dev"))
+	{
+		if (ImGui::BeginTabItem("Slormelines"))
+		{
+			for (int id = 0; id < 5; id++) DrawGrantRow(id);
+			ImGui::EndTabItem();
+		}
+		if (ImGui::BeginTabItem("Slormandrites"))
+		{
+			for (int id = 5; id < MATERIAL_COUNT; id++) DrawGrantRow(id);
+			ImGui::EndTabItem();
+		}
+		if (ImGui::BeginTabItem("Slormites"))
+		{
+			for (int id = 1; id <= SLORMITE_COUNT; id++) DrawGrantRow(MATERIAL_COUNT + id);
+			ImGui::EndTabItem();
+		}
+		if (ImGui::BeginTabItem("Currencies"))
+		{
+			DrawGrantRow(MATERIAL_COUNT);
+			ImGui::EndTabItem();
+		}
+		ImGui::EndTabBar();
+	}
+	if (!g_GrantResult.empty())
+		ImGui::TextWrapped("%s", g_GrantResult.c_str());
+}
+#endif
+
 static bool DrawOptions()
 {
 	bool changed = false;
@@ -752,6 +808,13 @@ static void DrawWindow()
 			changed |= DrawOptions();
 			ImGui::EndTabItem();
 		}
+#ifdef SLORM_DEV
+		if (ImGui::BeginTabItem("Dev"))
+		{
+			DrawDev();
+			ImGui::EndTabItem();
+		}
+#endif
 		ImGui::EndTabBar();
 	}
 

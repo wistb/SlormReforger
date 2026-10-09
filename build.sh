@@ -2,6 +2,7 @@
 # ./build.sh          build bin/SlormReforger.dll and the bin/version.dll proxy
 # ./build.sh deploy   build, then copy into the game's mods/Aurie
 # ./build.sh package  build, then write dist/SlormReforger-v<version>.zip
+# SLORM_DEV=1 adds the Dev tab, which grants materials and goldus. Not for release.
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -17,6 +18,18 @@ fi
 [ -f "$VSWHERE" ] || { echo "vswhere not found: install VS 2022 Build Tools with the C++ workload" >&2; exit 1; }
 MSBUILD_WIN=$("$VSWHERE" -latest -products '*' -requires Microsoft.Component.MSBuild -find 'MSBuild\**\Bin\MSBuild.exe' | tr -d '\r' | head -1)
 [ -n "$MSBUILD_WIN" ] || { echo "MSBuild not found" >&2; exit 1; }
+
+VARIANT=release
+if [ -n "${SLORM_DEV:-}" ]; then
+	[ "${1:-}" != package ] || { echo "a dev build cannot be packaged" >&2; exit 1; }
+	VARIANT=dev
+	# cl reads extra options from CL.
+	export CL=/DSLORM_DEV WSLENV="${WSLENV:+$WSLENV:}CL"
+fi
+# MSBuild does not see the define change, so rebuild when the variant does.
+mkdir -p obj
+[ "$(cat obj/variant 2>/dev/null)" = "$VARIANT" ] || touch source/*.cpp
+echo "$VARIANT" > obj/variant
 
 "$(wslpath -u "$MSBUILD_WIN")" "$(wslpath -w SlormReforger.vcxproj)" -nologo -v:minimal -p:Configuration=Release -p:Platform=x64
 "$(wslpath -u "$MSBUILD_WIN")" "$(wslpath -w proxy/Proxy.vcxproj)" -nologo -v:minimal -p:Configuration=Release -p:Platform=x64

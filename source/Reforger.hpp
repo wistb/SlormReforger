@@ -109,6 +109,17 @@ extern std::map<std::string, std::vector<PoolEntry>> g_Pools;
 extern double g_Stock[MATERIAL_COUNT];
 extern double g_Gold;
 
+#ifdef SLORM_DEV
+// Dev builds only: material to grant on the next step, -1 for none.
+extern int g_GrantId;
+extern int g_GrantAmount;
+extern std::string g_GrantResult;
+// Grant ids: materials, then goldus, then slormites 1-15.
+constexpr int SLORMITE_COUNT = 15;
+extern double g_SlormiteStock[SLORMITE_COUNT];
+const char* SlormiteName(int Id);
+#endif
+
 extern std::vector<StatInfo> g_Stats;
 // Class of the hero whose item is in the slot; mastery ids are per class.
 extern int g_HeroClass;
