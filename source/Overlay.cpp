@@ -115,7 +115,8 @@ static void SetTarget(const Target& New)
 {
 	for (Target& target : g_Targets)
 	{
-		if (target.tier == New.tier && target.stat == New.stat)
+		// An item holds one reaper, mastery and attribute stat, so a new target replaces the old.
+		if (target.tier == New.tier && (target.stat == New.stat || IsSpecialTier(New.tier)))
 		{
 			target = New;
 			return;

@@ -379,6 +379,16 @@ int TargetState(const Target& Target, std::string& Text)
 	}
 
 	char text[96];
+	// More targets than the tier has stats can never all be met.
+	int wanted = 0;
+	for (const ::Target& other : g_Targets)
+		if (other.tier == Target.tier) wanted++;
+	if (in_tier > 0 && wanted > in_tier)
+	{
+		snprintf(text, sizeof(text), "%d targets, item has %d %s stat%s", wanted, in_tier, TierName(Target.tier), in_tier == 1 ? "" : "s");
+		Text = text;
+		return 2;
+	}
 	if (match)
 	{
 		if (Met(Target, *match))
@@ -684,6 +694,18 @@ static void Start(CInstance* Self, CInstance* Other)
 		g_Status = "nothing to do";
 		return;
 	}
+	// Two targets for a tier that holds one stat could never both be met.
+	for (size_t i = 0; i < g_RunTargets.size(); i++)
+	{
+		for (size_t j = i + 1; j < g_RunTargets.size(); j++)
+		{
+			if (!IsSpecialTier(g_RunTargets[i].tier) || g_RunTargets[i].tier != g_RunTargets[j].tier)
+				continue;
+			g_Status = std::string("only one ") + TierName(g_RunTargets[i].tier) + " target is possible, remove the other";
+			Note("%s", g_Status.c_str());
+			return;
+		}
+	}
 	g_GoldAtStart = ToNumber(g_Yytk->CallBuiltin("variable_global_get", { RValue("gold") }));
 	g_LockStat.clear();
 	g_AddTier.clear();
@@ -769,6 +791,16 @@ static void Tick(CInstance* Self, CInstance* Other)
 		g_AddTier.clear();
 		if (!done)
 			return Stop((std::string("adding ") + TierName(tier) + " stats did not take effect").c_str());
+	}
+	// Stop on an unreachable target before paying for a lock.
+	for (const Target& target : g_RunTargets)
+	{
+		bool met = false;
+		for (const Affix& affix : g_Item)
+			if (affix.tier == target.tier && affix.stat == target.stat && Met(target, affix)) met = true;
+		std::string problem;
+		if (!met && TargetState(target, problem) == 2)
+			return Stop((StatName(target.stat) + ": " + problem).c_str());
 	}
 	if (g_AutoLock && !g_AllScores)
 	{
