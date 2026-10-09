@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # ./build.sh          build bin/SlormReforger.dll
 # ./build.sh deploy   build, then copy into the game's mods/Aurie
+# ./build.sh package  build, then write dist/SlormReforger-<version>.zip
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -18,4 +19,17 @@ if [ "${1:-}" = deploy ]; then
 		echo "waiting for the game to release SlormReforger.dll..."; sleep 3
 	done
 	echo "deployed to $GAME/mods/Aurie"
+fi
+
+if [ "${1:-}" = package ]; then
+	VERSION=$(sed -n 's/^#define SLORMREFORGER_VERSION "\(.*\)"/\1/p' source/Version.hpp)
+	mkdir -p dist
+	rm -f "dist/SlormReforger-$VERSION.zip"
+	python3 - "dist/SlormReforger-$VERSION.zip" <<'PY'
+import sys, zipfile
+with zipfile.ZipFile(sys.argv[1], "w", zipfile.ZIP_DEFLATED) as archive:
+    archive.write("bin/SlormReforger.dll", "SlormReforger.dll")
+    archive.write("nexus/README.txt", "README.txt")
+PY
+	echo "wrote dist/SlormReforger-$VERSION.zip"
 fi
