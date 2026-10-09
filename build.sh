@@ -8,7 +8,11 @@ cd "$(dirname "$0")"
 # "deploy" needs the game folder: export SLORM_GAME, or put SLORM_GAME="..." in .env (untracked).
 [ -f .env ] && . ./.env
 GAME="${SLORM_GAME:-}"
-VSWHERE="${VSWHERE:?set VSWHERE to the path of vswhere.exe}"
+# vswhere lives in a fixed place under Program Files (x86); ask Windows where that is. VSWHERE overrides it.
+if [ -z "${VSWHERE:-}" ]; then
+	PROGRAM_FILES=$(cmd.exe /c 'echo %ProgramFiles(x86)%' 2>/dev/null | tr -d '\r')
+	VSWHERE="$(wslpath -u "$PROGRAM_FILES")/Microsoft Visual Studio/Installer/vswhere.exe"
+fi
 
 [ -f "$VSWHERE" ] || { echo "vswhere not found: install VS 2022 Build Tools with the C++ workload" >&2; exit 1; }
 MSBUILD_WIN=$("$VSWHERE" -latest -products '*' -requires Microsoft.Component.MSBuild -find 'MSBuild\**\Bin\MSBuild.exe' | tr -d '\r' | head -1)
