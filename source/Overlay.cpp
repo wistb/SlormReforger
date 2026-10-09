@@ -41,8 +41,10 @@ static int g_NewGoal = 0;
 static double g_NewAmount = 0;
 static bool g_AllStats = false;
 
-static const char* TIER_CODES[] = { "N", "D", "M", "R", "E" };
-static const char* TIER_NAMES[] = { "Normal", "Defense", "Magic", "Rare", "Epic" };
+// The first five hold rolled stats; the last three hold a single stat with a plain value.
+static const char* TIER_CODES[] = { "N", "D", "M", "R", "E", "RP", "MA", "AT" };
+static const char* TIER_NAMES[] = { "Normal", "Defense", "Magic", "Rare", "Epic", "Reaper", "Mastery", "Attribute" };
+static const char* SPECIAL_GOAL_NAMES[] = { "Stat only", "Max roll", "Value at least" };
 static const char* GOAL_NAMES[] = { "Stat only", "Max roll", "Value at least", "Roll at least" };
 
 void OverlaySetIniPath(const std::string& Path)
@@ -52,14 +54,28 @@ void OverlaySetIniPath(const std::string& Path)
 
 const char* TierName(const std::string& Code)
 {
-	for (int i = 0; i < 5; i++)
+	for (int i = 0; i < 8; i++)
 		if (Code == TIER_CODES[i]) return TIER_NAMES[i];
 	return Code == "L" ? "Legendary" : Code.c_str();
 }
 
 // Rarity colours as the game shows them.
-static ImVec4 TierColor(const std::string& Code)
+static ImVec4 TierColor(const std::string& Code, const std::string& Stat = "")
 {
+	if (Code == "RP") return { 20 / 255.0f, 142 / 255.0f, 137 / 255.0f, 1.0f };
+	if (Code == "MA") return { 206 / 255.0f, 70 / 255.0f, 7 / 255.0f, 1.0f };
+	if (Code == "AT")
+	{
+		// The tier has its own colour; each attribute has another, in the game's order.
+		static const ImVec4 traits[] = {
+			{ 47 / 255.0f, 89 / 255.0f, 150 / 255.0f, 1.0f }, { 168 / 255.0f, 48 / 255.0f, 7 / 255.0f, 1.0f },
+			{ 121 / 255.0f, 181 / 255.0f, 73 / 255.0f, 1.0f }, { 208 / 255.0f, 181 / 255.0f, 69 / 255.0f, 1.0f },
+			{ 75 / 255.0f, 193 / 255.0f, 178 / 255.0f, 1.0f }, { 117 / 255.0f, 48 / 255.0f, 152 / 255.0f, 1.0f },
+			{ 205 / 255.0f, 112 / 255.0f, 40 / 255.0f, 1.0f }, { 191 / 255.0f, 60 / 255.0f, 89 / 255.0f, 1.0f },
+		};
+		int id = Stat.size() == 4 ? Stat[3] - '0' : -1;
+		return id >= 0 && id < 8 ? traits[id] : ImVec4{ 239 / 255.0f, 203 / 255.0f, 143 / 255.0f, 1.0f };
+	}
 	if (Code == "M") return { 46 / 255.0f, 135 / 255.0f, 38 / 255.0f, 1.0f };
 	if (Code == "R") return { 23 / 255.0f, 106 / 255.0f, 177 / 255.0f, 1.0f };
 	if (Code == "E") return { 198 / 255.0f, 141 / 255.0f, 32 / 255.0f, 1.0f };
@@ -87,7 +103,7 @@ static std::string Describe(const Target& Target)
 	snprintf(amount, sizeof(amount), "%g", Target.amount);
 	switch (Target.goal)
 	{
-	case Goal::Any: return text + ", any roll";
+	case Goal::Any: return text + (IsSpecialTier(Target.tier) ? ", any value" : ", any roll");
 	case Goal::MaxRoll: return text + ", max roll";
 	case Goal::Roll: return text + ", roll at least " + amount;
 	default: return text + ", value at least " + amount;
@@ -135,7 +151,10 @@ static bool DrawItem()
 			ImGui::TableNextColumn();
 			ImGui::TextColored(TierColor(affix.tier), "%s", TierName(affix.tier));
 			ImGui::TableNextColumn();
-			ImGui::TextUnformatted(StatName(affix.stat).c_str());
+			if (IsSpecialTier(affix.tier))
+				ImGui::TextColored(TierColor(affix.tier, affix.stat), "%s", StatName(affix.stat).c_str());
+			else
+				ImGui::TextUnformatted(StatName(affix.stat).c_str());
 			// Same tags and colours as the stat dropdown.
 			bool tagged = false;
 			if (affix.pure > 100)
@@ -209,13 +228,49 @@ static bool DrawTargets()
 	}
 
 	ImGui::SetNextItemWidth(90);
-	if (ImGui::Combo("##tier", &g_NewTier, TIER_NAMES, 5))
-		g_NewStat.clear();
+	ImGui::PushStyleColor(ImGuiCol_Text, TierColor(TIER_CODES[g_NewTier]));
+	bool tier_open = ImGui::BeginCombo("##tier", TIER_NAMES[g_NewTier]);
+	ImGui::PopStyleColor();
+	if (tier_open)
+	{
+		for (int i = 0; i < 8; i++)
+		{
+			ImGui::PushStyleColor(ImGuiCol_Text, TierColor(TIER_CODES[i]));
+			if (ImGui::Selectable(TIER_NAMES[i], i == g_NewTier) && i != g_NewTier)
+			{
+				g_NewTier = i;
+				g_NewStat.clear();
+			}
+			ImGui::PopStyleColor();
+		}
+		ImGui::EndCombo();
+	}
 	ImGui::SameLine();
 	ImGui::SetNextItemWidth(260);
 	std::string tier = TIER_CODES[g_NewTier];
+	bool special = IsSpecialTier(tier);
 	if (ImGui::BeginCombo("##stat", g_NewStat.empty() ? "choose a stat" : StatName(g_NewStat).c_str()))
 	{
+		if (special)
+		{
+			for (const auto& [ref, name] : SpecialStats(tier))
+			{
+				bool on_item = std::any_of(g_Item.begin(), g_Item.end(), [&](const Affix& affix) { return affix.stat == ref; });
+				ImGui::PushID(ref.c_str());
+				ImGui::PushStyleColor(ImGuiCol_Text, TierColor(tier, ref));
+				bool picked = ImGui::Selectable(name.c_str(), ref == g_NewStat);
+				ImGui::PopStyleColor();
+				if (on_item)
+				{
+					ImGui::SameLine();
+					ImGui::TextColored({ 0.9f, 0.8f, 0.3f, 1.0f }, "[on item]");
+				}
+				if (picked)
+					g_NewStat = ref;
+				ImGui::PopID();
+			}
+		}
+		else
 		for (const StatInfo& stat : g_Stats)
 		{
 			if (!InPool(stat, tier))
@@ -251,11 +306,22 @@ static bool DrawTargets()
 		}
 		ImGui::EndCombo();
 	}
-	ImGui::SameLine();
-	ImGui::Checkbox("All stats", &g_AllStats);
+	if (!special)
+	{
+		ImGui::SameLine();
+		ImGui::Checkbox("All stats", &g_AllStats);
+	}
 
 	ImGui::SetNextItemWidth(130);
-	ImGui::Combo("##goal", &g_NewGoal, GOAL_NAMES, 4);
+	if (special)
+	{
+		// These have no roll, only a value.
+		int goal = g_NewGoal > 2 ? 2 : g_NewGoal;
+		ImGui::Combo("##goal", &goal, SPECIAL_GOAL_NAMES, 3);
+		g_NewGoal = goal;
+	}
+	else
+		ImGui::Combo("##goal", &g_NewGoal, GOAL_NAMES, 4);
 	if (g_NewGoal >= 2)
 	{
 		ImGui::SameLine();
@@ -431,7 +497,7 @@ static bool DrawRunSettings()
 	for (const Recipe& recipe : g_Recipes)
 	{
 		bool reroll = recipe.type == 0 || recipe.type == 1;
-		bool add = recipe.type == 2 && g_AutoAdd && recipe.tier.size() == 1;
+		bool add = recipe.type == 2 && g_AutoAdd;
 		if (!reroll && !add && !(recipe.type == 3 && g_AutoLock))
 			continue;
 		bool relevant = g_Targets.empty() && reroll;
@@ -443,10 +509,11 @@ static bool DrawRunSettings()
 				bool on_item = false;
 				for (const Affix& affix : g_Item)
 					if (affix.tier == target.tier) on_item = true;
-				std::string tier(1, static_cast<char>(std::toupper(static_cast<unsigned char>(recipe.tier[0]))));
-				if (!on_item && AddRank(tier) >= 0 && AddRank(tier) <= AddRank(target.tier)) relevant = true;
+				std::string tier = recipe.tier;
+				for (char& c : tier) c = static_cast<char>(toupper(static_cast<unsigned char>(c)));
+				if (!on_item && (tier == target.tier || (AddRank(tier) >= 0 && AddRank(tier) <= AddRank(target.tier)))) relevant = true;
 			}
-			else if (!recipe.tier.empty() && std::tolower(static_cast<unsigned char>(target.tier[0])) == recipe.tier[0]) relevant = true;
+			else if (Lower(target.tier) == recipe.tier) relevant = true;
 		}
 		if (!relevant)
 			continue;

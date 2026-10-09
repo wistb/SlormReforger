@@ -110,6 +110,23 @@ extern double g_Stock[MATERIAL_COUNT];
 extern double g_Gold;
 
 extern std::vector<StatInfo> g_Stats;
+// Class of the hero whose item is in the slot; mastery ids are per class.
+extern int g_HeroClass;
+
+inline std::string Lower(std::string Text)
+{
+	for (char& c : Text) c = static_cast<char>(tolower(static_cast<unsigned char>(c)));
+	return Text;
+}
+
+// Reaper, mastery and attribute stats: one per item, stored as [tier, id, value].
+// Their stat refs here are "rp_4", "ma_2", "at_5".
+inline bool IsSpecialTier(const std::string& Tier)
+{
+	return Tier == "RP" || Tier == "MA" || Tier == "AT";
+}
+// Every stat a special tier can hold, as (ref, name).
+std::vector<std::pair<std::string, std::string>> SpecialStats(const std::string& Tier);
 
 const PoolEntry* FindInPool(const std::string& Tier, const std::string& Stat);
 double MaxRoll(const std::string& Tier, const std::string& Stat);

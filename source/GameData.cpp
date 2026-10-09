@@ -5,6 +5,9 @@
 using namespace Aurie;
 
 std::vector<StatInfo> g_Stats;
+int g_HeroClass = 0;
+
+static std::map<int, std::string> g_Smiths, g_Traits, g_Skills[3];
 
 using Row = std::map<std::string, std::string>;
 
@@ -155,6 +158,25 @@ void LoadGameData()
 		if (!row["EN"].empty()) names[row["REF"]] = row["EN"];
 
 	std::lock_guard guard(g_Lock);
+	for (const auto& [ref, name] : names)
+	{
+		try
+		{
+			if (ref.rfind("weapon_reapersmith_", 0) == 0 && ref.find('_', 19) == std::string::npos) g_Smiths[std::stoi(ref.substr(19))] = name;
+			if (ref.rfind("character_trait_", 0) == 0 && ref.find('_', 16) == std::string::npos) g_Traits[std::stoi(ref.substr(16))] = name;
+		}
+		catch (...) {}
+	}
+	for (int hero = 0; hero < 3; hero++)
+	{
+		for (Row& row : LoadTable(game / ("dat_cla_" + std::to_string(hero) + ".json")))
+		{
+			if (row["TYPE"] != "support" && row["TYPE"] != "active")
+				continue;
+			try { g_Skills[hero][std::stoi(row["REF"])] = row["EN_NAME"]; }
+			catch (...) {}
+		}
+	}
 	g_Stats.clear();
 	for (Row& row : LoadTable(game / "dat_sta.json"))
 	{
@@ -179,8 +201,29 @@ const StatInfo* FindStat(const std::string& Ref)
 	return nullptr;
 }
 
+std::vector<std::pair<std::string, std::string>> SpecialStats(const std::string& Tier)
+{
+	std::vector<std::pair<std::string, std::string>> out;
+	const std::map<int, std::string>& names = Tier == "RP" ? g_Smiths : Tier == "AT" ? g_Traits : g_Skills[g_HeroClass >= 0 && g_HeroClass < 3 ? g_HeroClass : 0];
+	const char* suffix = Tier == "RP" ? " Affinity" : Tier == "MA" ? " Mastery" : "";
+	for (const auto& [id, name] : names)
+		out.emplace_back(Lower(Tier) + "_" + std::to_string(id), name + suffix);
+	return out;
+}
+
 std::string StatName(const std::string& Ref)
 {
+	if (Ref.size() > 3 && Ref[2] == '_')
+	{
+		std::string tier = Ref.substr(0, 2);
+		for (char& c : tier) c = static_cast<char>(toupper(static_cast<unsigned char>(c)));
+		if (IsSpecialTier(tier))
+		{
+			for (const auto& [ref, name] : SpecialStats(tier))
+				if (ref == Ref) return name;
+			return tier + " " + Ref.substr(3);
+		}
+	}
 	const StatInfo* stat = FindStat(Ref);
 	return stat ? stat->name : Ref;
 }

@@ -104,6 +104,17 @@ static bool ReadItem(const RValue& Item, std::vector<Affix>& Out)
 		if (!parts[i].IsArray())
 			continue;
 		std::vector<RValue> fields = parts[i].ToVector();
+		if (fields.size() >= 3 && fields[0].IsString() && IsSpecialTier(fields[0].ToString()))
+		{
+			Affix affix;
+			affix.tier = fields[0].ToString();
+			affix.stat = Lower(affix.tier) + "_" + std::to_string(static_cast<int>(ToNumber(fields[1])));
+			affix.roll = affix.shown = ToNumber(fields[2]);
+			affix.has_shown = true;
+			affix.index = static_cast<int>(i);
+			Out.push_back(affix);
+			continue;
+		}
 		if (fields.size() < 5 || !fields[0].IsString() || !fields[1].IsString())
 			continue;
 		Affix affix;
@@ -169,8 +180,9 @@ static bool ReadSlotItem(CInstance* Self, CInstance* Other)
 	std::vector<RValue> heroes = inventory.ToVector();
 	RValue item;
 	int found = 0;
-	for (const RValue& hero : heroes)
+	for (size_t h = 0; h < heroes.size(); h++)
 	{
+		const RValue& hero = heroes[h];
 		if (!hero.IsArray())
 			continue;
 		// Fetch the one slot; copying all 674 is slow.
@@ -180,6 +192,7 @@ static bool ReadSlotItem(CInstance* Self, CInstance* Other)
 		if (IsItem(slot))
 		{
 			item = slot;
+			g_HeroClass = static_cast<int>(h);
 			found++;
 		}
 	}
@@ -188,10 +201,10 @@ static bool ReadSlotItem(CInstance* Self, CInstance* Other)
 		return false;
 
 	std::vector<RValue> parts = item.ToVector();
-	size_t affix_index = 0;
-	for (size_t i = 1; i < parts.size(); i++)
+	for (Affix& affix : g_Item)
 	{
-		if (!parts[i].IsArray() || affix_index >= g_Item.size())
+		size_t i = static_cast<size_t>(affix.index);
+		if (IsSpecialTier(affix.tier) || i >= parts.size() || !parts[i].IsArray())
 			continue;
 		std::vector<RValue> fields = parts[i].ToVector();
 		if (fields.size() < 5)
@@ -203,9 +216,8 @@ static bool ReadSlotItem(CInstance* Self, CInstance* Other)
 		RValue shown;
 		g_StatFromScore(Self, Other, shown, 6, pointers);
 
-		g_Item[affix_index].shown = ToNumber(shown);
-		g_Item[affix_index].has_shown = true;
-		affix_index++;
+		affix.shown = ToNumber(shown);
+		affix.has_shown = true;
 	}
 	ReadPools(Self, Other, item);
 	return true;
@@ -316,6 +328,9 @@ const PoolEntry* FindInPool(const std::string& Tier, const std::string& Stat)
 
 double MaxRoll(const std::string& Tier, const std::string& Stat)
 {
+	// Fixed value ranges: reaper 1-5, mastery 1-2, attribute 1-3.
+	if (IsSpecialTier(Tier))
+		return Tier == "RP" ? 5 : Tier == "MA" ? 2 : 3;
 	if (const PoolEntry* entry = FindInPool(Tier, Stat))
 		return entry->max;
 
@@ -329,6 +344,8 @@ double MaxRoll(const std::string& Tier, const std::string& Stat)
 
 static bool Met(const Target& Target, const Affix& Affix)
 {
+	if (IsSpecialTier(Target.tier))
+		return Target.goal == Goal::Any || Affix.roll >= (Target.goal == Goal::MaxRoll ? MaxRoll(Target.tier, Target.stat) : Target.amount);
 	switch (Target.goal)
 	{
 	case Goal::Any: return true;
@@ -392,7 +409,7 @@ int TargetState(const Target& Target, std::string& Text)
 	if (in_tier == 0)
 	{
 		Text = std::string("no ") + TierName(Target.tier) + " stat on item";
-		if (!g_AutoAdd || AddRank(Target.tier) < 0)
+		if (!g_AutoAdd || (AddRank(Target.tier) < 0 && !IsSpecialTier(Target.tier)))
 			return 2;
 		Text += ", will add";
 		return 1;
@@ -403,6 +420,8 @@ int TargetState(const Target& Target, std::string& Text)
 		return 2;
 	}
 	int possible = 0;
+	if (IsSpecialTier(Target.tier))
+		possible = static_cast<int>(SpecialStats(Target.tier).size()) - 1;
 	if (pool != g_Pools.end())
 		for (const PoolEntry& entry : pool->second) possible += entry.on_item ? 0 : 1;
 	Text = "not on item yet";
@@ -432,7 +451,7 @@ static bool g_AllScores = false;
 // Tier "" finds the recipe with no tier code ("Reforge all Scores").
 static int FindRecipe(CInstance* Ui, int Type, const std::string& Tier)
 {
-	std::string code = Tier.empty() ? "" : std::string(1, static_cast<char>(std::tolower(Tier[0])));
+	std::string code = Lower(Tier);
 	RValue recipes = g_Yytk->CallBuiltin("variable_instance_get", { RValue(Ui), RValue("blacksmith_recipes") });
 	if (!recipes.IsArray())
 		return -1;
@@ -757,6 +776,9 @@ static void Tick(CInstance* Self, CInstance* Other)
 		{
 			if (lock_affix)
 				break;
+			// Reaper, mastery and attribute stats cannot be locked.
+			if (IsSpecialTier(affix.tier))
+				continue;
 			const Target* own = nullptr;
 			bool missing = false;
 			for (const Target& target : g_RunTargets)
@@ -794,7 +816,7 @@ static void Tick(CInstance* Self, CInstance* Other)
 		if (TargetState(target, problem) == 2)
 			return Stop((StatName(target.stat) + ": " + problem).c_str());
 		pending = &target;
-		recipe_type = match ? 0 : 1;
+		recipe_type = match && !IsSpecialTier(target.tier) ? 0 : 1;
 		bool in_tier = false;
 		for (const Affix& affix : g_Item)
 			if (affix.tier == target.tier) in_tier = true;
@@ -818,7 +840,12 @@ static void Tick(CInstance* Self, CInstance* Other)
 	std::string add_tier;
 	if (!lock_affix && recipe_type == 2)
 	{
-		for (const char* tier : { "M", "R", "E" })
+		if (IsSpecialTier(pending->tier))
+		{
+			recipe = FindRecipe(Self, 2, pending->tier);
+			add_tier = pending->tier;
+		}
+		else for (const char* tier : { "M", "R", "E" })
 		{
 			if (recipe >= 0 || AddRank(tier) > AddRank(pending->tier))
 				break;
