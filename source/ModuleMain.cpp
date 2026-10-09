@@ -1044,6 +1044,9 @@ static void Tick(CInstance* Self, CInstance* Other)
 		std::string problem;
 		if (TargetState(target, problem) == 2)
 			return Stop((StatName(target.stat) + ": " + problem).c_str());
+		// Held locked while its tier still misses a target stat; that one goes first.
+		if (match && match->locked)
+			continue;
 		pending = &target;
 		recipe_type = match && !IsSpecialTier(target.tier) ? 0 : 1;
 		bool in_tier = false;
