@@ -13,6 +13,7 @@ It works through the game's own reforge recipes and pays their normal costs. It 
 - **Targets per tier.** Choose a stat and a goal: have the stat at any roll, max roll, at least a given value, or at least a given roll.
 - **The game's real stat pools.** The stat list is the game's own "Possible Outcomes" for that item and tier, so you can only pick what can actually roll. Stats already on the item are tagged.
 - **Auto-lock.** Optionally locks each target stat as soon as it is met and unlocks one that still needs a better roll, so several targets in one tier are found one at a time.
+- **Auto-add.** Optionally applies the game's Add Magic, Rare and Epic recipes when a target's tier is not on the item yet.
 - **Material reserves.** Set how many of each material to keep. A run stops before it would go below that.
 - **Careful by default.** It refuses targets that cannot be reached, leaves pure stats alone unless you allow it, stops if you close the panel, and has a step limit per run.
 - **Run log.** Every reroll and lock is listed, with the goldus spent at the end.
