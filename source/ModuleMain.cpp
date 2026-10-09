@@ -473,7 +473,23 @@ int TargetState(const Target& Target, std::string& Text)
 	if (pool != g_Pools.end() && !pool->second.empty() && !FindInPool(Target.tier, Target.stat))
 	{
 		Text = std::string("not a possible ") + TierName(Target.tier) + " stat";
-		return 2;
+		// What a tier can roll depends on the item level, so a pending level update decides first.
+		int needed = 0;
+		if (const StatInfo* stat = FindStat(Target.stat))
+		{
+			auto column = stat->columns.find("MIN_LEVEL");
+			try { if (column != stat->columns.end()) needed = std::stoi(column->second); }
+			catch (...) {}
+		}
+		if (needed > g_ItemLevel)
+			Text = "needs item level " + std::to_string(needed);
+		bool leveling = false;
+		for (const ::Target& other : g_Targets)
+			if (IsLevelTier(other.tier)) leveling = UpdateOffered();
+		if (!leveling)
+			return 2;
+		Text += needed > g_ItemLevel ? ", will update" : " at this level, checked again after the update";
+		return 1;
 	}
 	if (in_tier == 0)
 	{

@@ -230,9 +230,17 @@ static bool DrawImportPreset()
 		if (ImGui::Button(label.c_str()))
 		{
 			g_Targets = matches[i]->targets;
+			// What can roll depends on the item level, so a higher-level build levels the item first.
+			if (matches[i]->level > g_ItemLevel)
+			{
+				Target level;
+				level.tier = "LV";
+				level.stat = "level";
+				g_Targets.insert(g_Targets.begin(), level);
+			}
 			changed = true;
 		}
-		ImGui::SetItemTooltip("Replace the targets with the %s from %s.", Lower(matches[i]->label).c_str(), preset.name.c_str());
+		ImGui::SetItemTooltip("Load the %s from %s.\nThis replaces all current targets.", Lower(matches[i]->label).c_str(), preset.name.c_str());
 	}
 	return changed;
 }
