@@ -203,10 +203,132 @@ static bool DrawItem()
 	return changed;
 }
 
+// Replaces the targets with the preset's for one gear slot.
+static bool DrawImportPreset()
+{
+	bool changed = false;
+	if (g_ActivePreset < 0 || g_ActivePreset >= static_cast<int>(g_Presets.size()) || !g_HasItem)
+		return false;
+	const Preset& preset = g_Presets[g_ActivePreset];
+	std::vector<const PresetSlot*> matches;
+	for (const PresetSlot& slot : preset.slots)
+		if (slot.slot == Lower(g_ItemSlot)) matches.push_back(&slot);
+	if (matches.empty())
+	{
+		ImGui::BeginDisabled();
+		ImGui::Button("Import preset");
+		ImGui::EndDisabled();
+		ImGui::SameLine();
+		ImGui::TextDisabled("%s has no %s", preset.name.c_str(), g_ItemSlot.c_str());
+		return false;
+	}
+	for (size_t i = 0; i < matches.size(); i++)
+	{
+		// A build has two rings; the item in the slot can be either.
+		std::string label = matches.size() > 1 ? "Import preset: " + Lower(matches[i]->label) : "Import preset";
+		if (i > 0) ImGui::SameLine();
+		if (ImGui::Button(label.c_str()))
+		{
+			g_Targets = matches[i]->targets;
+			changed = true;
+		}
+		ImGui::SetItemTooltip("Replace the targets with the %s from %s.", Lower(matches[i]->label).c_str(), preset.name.c_str());
+	}
+	return changed;
+}
+
+static bool DrawPresets()
+{
+	bool changed = false;
+	static char link[2048] = "";
+	static char name[64] = "";
+	static std::string error;
+
+	ImGui::SeparatorText("Import a build");
+	ImGui::TextDisabled("Paste a slorm-planner share link.");
+	ImGui::SetNextItemWidth(360);
+	ImGui::InputTextWithHint("##link", "https://cayrac.github.io/slorm-planner/view/build/...", link, sizeof(link));
+	ImGui::SameLine();
+	if (ImGui::Button("Paste"))
+	{
+		const char* clipboard = ImGui::GetClipboardText();
+		snprintf(link, sizeof(link), "%s", clipboard ? clipboard : "");
+	}
+	ImGui::SetNextItemWidth(200);
+	ImGui::InputTextWithHint("##name", "name (optional)", name, sizeof(name));
+	ImGui::SameLine();
+	ImGui::BeginDisabled(!link[0]);
+	if (ImGui::Button("Import"))
+	{
+		Preset preset;
+		if (ParsePreset(link, preset, error))
+		{
+			if (name[0]) preset.name = name;
+			g_Presets.push_back(std::move(preset));
+			g_ActivePreset = static_cast<int>(g_Presets.size()) - 1;
+			link[0] = name[0] = 0;
+			error.clear();
+			changed = true;
+		}
+	}
+	ImGui::EndDisabled();
+	if (!error.empty())
+		ImGui::TextColored({ 1.0f, 0.4f, 0.4f, 1.0f }, "%s", error.c_str());
+
+	ImGui::SeparatorText("Presets");
+	if (g_Presets.empty())
+		ImGui::TextDisabled("None yet.");
+	for (size_t i = 0; i < g_Presets.size(); i++)
+	{
+		ImGui::PushID(static_cast<int>(i));
+		if (ImGui::SmallButton("x"))
+		{
+			g_Presets.erase(g_Presets.begin() + i);
+			if (g_ActivePreset == static_cast<int>(i)) g_ActivePreset = g_Presets.empty() ? -1 : 0;
+			else if (g_ActivePreset > static_cast<int>(i)) g_ActivePreset--;
+			changed = true;
+			ImGui::PopID();
+			break;
+		}
+		ImGui::SameLine();
+		if (ImGui::RadioButton(g_Presets[i].name.c_str(), g_ActivePreset == static_cast<int>(i)))
+		{
+			g_ActivePreset = static_cast<int>(i);
+			changed = true;
+		}
+		ImGui::SameLine();
+		ImGui::TextDisabled("%s, level %d, %d items", HeroName(g_Presets[i].hero), g_Presets[i].level, static_cast<int>(g_Presets[i].slots.size()));
+		ImGui::PopID();
+	}
+
+	if (g_ActivePreset < 0 || g_ActivePreset >= static_cast<int>(g_Presets.size()))
+		return changed;
+	const Preset& preset = g_Presets[g_ActivePreset];
+	ImGui::SeparatorText(preset.name.c_str());
+	for (size_t i = 0; i < preset.slots.size(); i++)
+	{
+		const PresetSlot& slot = preset.slots[i];
+		ImGui::PushID(static_cast<int>(i));
+		bool here = g_HasItem && slot.slot == Lower(g_ItemSlot);
+		std::string title = slot.label + ", level " + std::to_string(slot.level) + (here ? " (in the slot)" : "");
+		if (ImGui::TreeNodeEx(title.c_str(), here ? ImGuiTreeNodeFlags_DefaultOpen : 0))
+		{
+			for (const Target& target : slot.targets)
+				ImGui::TextColored(TierColor(target.tier, target.stat), "%s", Describe(target).c_str());
+			if (slot.legendary)
+				ImGui::TextDisabled("Legendary effect: not imported, it cannot be targeted.");
+			ImGui::TreePop();
+		}
+		ImGui::PopID();
+	}
+	return changed;
+}
+
 static bool DrawTargets()
 {
 	bool changed = false;
 	ImGui::SeparatorText("Targets");
+	changed |= DrawImportPreset();
 	if (g_Targets.empty())
 		ImGui::TextDisabled("None. Start will max the Reforge Scores recipe selected in the game.");
 
@@ -807,6 +929,13 @@ static void DrawWindow()
 			if (g_HasItem && g_Appearance.show_costs)
 				DrawCosts();
 			DrawRun();
+			ImGui::EndTabItem();
+		}
+		if (ImGui::BeginTabItem("Presets"))
+		{
+			ImGui::BeginDisabled(g_Running);
+			changed |= DrawPresets();
+			ImGui::EndDisabled();
 			ImGui::EndTabItem();
 		}
 		if (ImGui::BeginTabItem("Options"))

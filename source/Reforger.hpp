@@ -40,6 +40,29 @@ struct Recipe
 	std::string tier;
 };
 
+// One gear slot of an imported build, as targets.
+struct PresetSlot
+{
+	// The game's name for the slot; both rings are "ring".
+	std::string slot;
+	std::string label;
+	int level = 0;
+	std::vector<Target> targets;
+	// The build has a legendary effect here; those cannot be targeted.
+	bool legendary = false;
+};
+
+// A build imported from a slorm-planner link.
+struct Preset
+{
+	std::string name;
+	// The link's last part, kept so the preset can be saved and read again.
+	std::string key;
+	int hero = 0;
+	int level = 0;
+	std::vector<PresetSlot> slots;
+};
+
 // One row of dat_sta.json; columns kept as text.
 struct StatInfo
 {
@@ -159,6 +182,12 @@ std::vector<std::pair<int, int>> ParseCost(const std::string& Spec);
 int TargetState(const Target& Target, std::string& Text);
 int AddRank(const std::string& Tier);
 const char* TierName(const std::string& Code);
+
+extern std::vector<Preset> g_Presets;
+// Preset the "Import preset" button reads, -1 for none.
+extern int g_ActivePreset;
+bool ParsePreset(const std::string& Text, Preset& Out, std::string& Error);
+const char* HeroName(int Class);
 
 void LoadGameData();
 const StatInfo* FindStat(const std::string& Ref);

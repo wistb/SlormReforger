@@ -231,6 +231,8 @@ static void LoadConfig()
 	g_AutoLock = false;
 	g_AutoAdd = false;
 	g_MoveTiers = false;
+	g_Presets.clear();
+	g_ActivePreset = -1;
 	g_Appearance = Appearance();
 
 	std::ifstream file(g_ConfigPath);
@@ -257,6 +259,21 @@ static void LoadConfig()
 		if (first == "auto_lock") { int flag = 0; words >> flag; g_AutoLock = flag != 0; continue; }
 		if (first == "auto_add") { int flag = 0; words >> flag; g_AutoAdd = flag != 0; continue; }
 		if (first == "move_tiers") { int flag = 0; words >> flag; g_MoveTiers = flag != 0; continue; }
+		if (first == "active_preset") { words >> g_ActivePreset; continue; }
+		if (first == "preset")
+		{
+			// preset KEY NAME
+			std::string key, name, error;
+			words >> key;
+			std::getline(words >> std::ws, name);
+			Preset preset;
+			if (ParsePreset(key, preset, error))
+			{
+				if (!name.empty()) preset.name = name;
+				g_Presets.push_back(std::move(preset));
+			}
+			continue;
+		}
 		if (first == "theme") { words >> g_Appearance.theme; continue; }
 		if (first == "accent") { int on = 0; words >> on >> g_Appearance.accent[0] >> g_Appearance.accent[1] >> g_Appearance.accent[2]; g_Appearance.custom_accent = on != 0; continue; }
 		if (first == "primary") { int on = 0; words >> on >> g_Appearance.primary[0] >> g_Appearance.primary[1] >> g_Appearance.primary[2]; g_Appearance.custom_primary = on != 0; continue; }
@@ -301,6 +318,8 @@ void SaveConfig()
 		}
 		file << '\n';
 	}
+	for (const Preset& preset : g_Presets)
+		file << "preset " << preset.key << ' ' << preset.name << '\n';
 	for (int id = 0; id < MATERIAL_COUNT; id++)
 		if (g_MinStock[id] > 0) file << "min_stock " << id << ' ' << g_MinStock[id] << '\n';
 	file << "max_attempts " << g_MaxAttempts << '\n'
@@ -308,6 +327,7 @@ void SaveConfig()
 		<< "auto_lock " << (g_AutoLock ? 1 : 0) << '\n'
 		<< "auto_add " << (g_AutoAdd ? 1 : 0) << '\n'
 		<< "move_tiers " << (g_MoveTiers ? 1 : 0) << '\n'
+		<< "active_preset " << g_ActivePreset << '\n'
 		<< "theme " << g_Appearance.theme << '\n'
 		<< "accent " << (g_Appearance.custom_accent ? 1 : 0) << ' ' << g_Appearance.accent[0] << ' ' << g_Appearance.accent[1] << ' ' << g_Appearance.accent[2] << '\n'
 		<< "primary " << (g_Appearance.custom_primary ? 1 : 0) << ' ' << g_Appearance.primary[0] << ' ' << g_Appearance.primary[1] << ' ' << g_Appearance.primary[2] << '\n'
@@ -1317,8 +1337,9 @@ EXPORTED AurieStatus ModuleInitialize(
 		return AURIE_MODULE_DEPENDENCY_NOT_RESOLVED;
 
 	g_ConfigPath = ModulePath.parent_path() / "SlormReforger.txt";
-	LoadConfig();
+	// Presets in the config are read against the stat table.
 	LoadGameData();
+	LoadConfig();
 	OverlaySetIniPath((ModulePath.parent_path() / "SlormReforger.layout.ini").string());
 
 	g_StatFromScore = FindScript("gml_Script_scr_loot_stat_from_score");

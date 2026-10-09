@@ -49,6 +49,7 @@
     <ClCompile Include="source\GameData.cpp" />
     <ClCompile Include="source\ModuleMain.cpp" />
     <ClCompile Include="source\Overlay.cpp" />
+    <ClCompile Include="source\Planner.cpp" />
     <ClCompile Include="vendor\imgui\imgui.cpp" />
     <ClCompile Include="vendor\imgui\imgui_draw.cpp" />
     <ClCompile Include="vendor\imgui\imgui_tables.cpp" />
