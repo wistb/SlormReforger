@@ -1214,7 +1214,8 @@ static void Tick(CInstance* Self, CInstance* Other)
 		if (match && match->locked)
 			continue;
 		pending = &target;
-		recipe_type = match && !IsSpecialTier(target.tier) ? 0 : 1;
+		// Keep the stat and reroll only its value where the game offers that.
+		recipe_type = match && (!IsSpecialTier(target.tier) || FindRecipe(Self, 0, target.tier) >= 0) ? 0 : 1;
 		bool in_tier = false;
 		for (const Affix& affix : g_Item)
 			if (affix.tier == target.tier) in_tier = true;
