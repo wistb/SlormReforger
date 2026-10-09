@@ -1,0 +1,87 @@
+#pragma once
+#include <YYToolkit/YYTK_Shared.hpp>
+#include <deque>
+#include <map>
+#include <mutex>
+#include <string>
+#include <vector>
+
+struct Affix
+{
+	std::string tier;
+	std::string stat;
+	double roll = 0;
+	bool locked = false;
+	double pure = 0;
+	// Displayed value, as the game computes it.
+	double shown = 0;
+	bool has_shown = false;
+};
+
+enum class Goal { Any, MaxRoll, Value, Roll };
+
+struct Target
+{
+	std::string tier;
+	std::string stat;
+	Goal goal = Goal::MaxRoll;
+	double amount = 0;
+};
+
+struct Recipe
+{
+	std::string label;
+	int type = 0;
+	std::string materials;
+	double gold = 0;
+	std::string tier;
+};
+
+// One row of dat_sta.json; columns kept as text.
+struct StatInfo
+{
+	std::string ref;
+	std::string name;
+	std::map<std::string, std::string> columns;
+};
+
+constexpr int MATERIAL_COUNT = 11;
+
+// Guards everything below; the game step writes it, the overlay reads and edits it.
+extern std::recursive_mutex g_Lock;
+
+extern std::vector<Target> g_Targets;
+extern int g_MaxAttempts;
+extern bool g_AllowPureLoss;
+extern int g_MinStock;
+
+extern bool g_Visible;
+extern bool g_Running;
+extern bool g_WantStart;
+extern bool g_WantStop;
+extern int g_Attempts;
+extern std::string g_Status;
+extern std::deque<std::string> g_Notes;
+
+extern bool g_HasItem;
+extern std::vector<Affix> g_Item;
+extern std::string g_ItemSlot;
+extern int g_ItemLevel;
+extern std::vector<Recipe> g_Recipes;
+extern double g_Stock[MATERIAL_COUNT];
+extern double g_Gold;
+
+extern std::vector<StatInfo> g_Stats;
+
+double MaxRoll(const std::string& Tier, const std::string& Stat);
+const char* MaterialName(int Id);
+void SaveConfig();
+
+void LoadGameData();
+const StatInfo* FindStat(const std::string& Ref);
+std::string StatName(const std::string& Ref);
+
+bool OverlayInstall(YYTK::YYTKInterface* Yytk);
+bool OverlayWantsMouse();
+bool OverlayWantsKeys();
+void OverlaySetIniPath(const std::string& Path);

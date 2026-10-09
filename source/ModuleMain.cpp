@@ -1,32 +1,11 @@
-#include <YYToolkit/YYTK_Shared.hpp>
+#include "Reforger.hpp"
+#include <cstdarg>
 #include <fstream>
 #include <sstream>
 #include <string>
 #include <vector>
 using namespace Aurie;
 using namespace YYTK;
-
-struct Affix
-{
-	std::string tier;
-	std::string stat;
-	double roll = 0;
-	bool locked = false;
-	double pure = 0;
-	// Displayed value, as the panel computed it this frame.
-	double shown = 0;
-	bool has_shown = false;
-};
-
-enum class Goal { Any, MaxRoll, Value, Roll };
-
-struct Target
-{
-	std::string tier;
-	std::string stat;
-	Goal goal = Goal::MaxRoll;
-	double amount = 0;
-};
 
 static YYTKInterface* g_Yytk = nullptr;
 static fs::path g_ConfigPath;
@@ -35,17 +14,34 @@ static PFUNC_YYGMLScript g_StatFromScore = nullptr;
 static PFUNC_YYGMLScript g_Apply = nullptr;
 static PFUNC_YYGMLScript g_CurrencySpend = nullptr;
 
-static std::vector<Target> g_Targets;
-static int g_MaxAttempts = 50;
-static bool g_AllowPureLoss = false;
-static int g_MinStock = 0;
+std::recursive_mutex g_Lock;
 
-static bool g_Running = false;
+std::vector<Target> g_Targets;
+int g_MaxAttempts = 50;
+bool g_AllowPureLoss = false;
+int g_MinStock = 0;
+
+bool g_Visible = true;
+bool g_Running = false;
+bool g_WantStart = false;
+bool g_WantStop = false;
+int g_Attempts = 0;
+std::string g_Status = "idle";
+std::deque<std::string> g_Notes;
+
+bool g_HasItem = false;
+std::vector<Affix> g_Item;
+std::string g_ItemSlot;
+int g_ItemLevel = 0;
+std::vector<Recipe> g_Recipes;
+double g_Stock[MATERIAL_COUNT] = {};
+double g_Gold = 0;
+
+// Targets of the current run; g_Targets, or derived from the selected recipe.
+static std::vector<Target> g_RunTargets;
 static bool g_KeyWasDown = false;
-static int g_Attempts = 0;
 static int g_Cooldown = 0;
-static std::vector<Affix> g_Item;
-static int g_ItemLevel = 0;
+static int g_Refresh = 0;
 
 // The blacksmith's reforge slot in global.inventory[hero].
 static constexpr size_t REFORGE_SLOT = 666;
@@ -54,6 +50,20 @@ template <typename... Args>
 static void Log(const char* Format, Args... Arguments)
 {
 	DbgPrintEx(LOG_SEVERITY_INFO, (std::string("[SlormReforger] ") + Format).c_str(), Arguments...);
+}
+
+// Also shown in the overlay.
+static void Note(const char* Format, ...)
+{
+	char text[256];
+	va_list arguments;
+	va_start(arguments, Format);
+	vsnprintf(text, sizeof(text), Format, arguments);
+	va_end(arguments);
+	Log("%s", text);
+	g_Notes.emplace_back(text);
+	if (g_Notes.size() > 60)
+		g_Notes.pop_front();
 }
 
 static double ToNumber(const RValue& Value)
@@ -77,6 +87,7 @@ static bool ReadItem(const RValue& Item, std::vector<Affix>& Out)
 
 	std::vector<RValue> header = parts[0].ToVector();
 	g_ItemLevel = header.size() > 2 ? static_cast<int>(ToNumber(header[2])) : 0;
+	g_ItemSlot = header.size() > 1 ? header[1].ToString() : "";
 
 	Out.clear();
 	for (size_t i = 1; i < parts.size(); i++)
@@ -162,21 +173,7 @@ static void LoadConfig()
 
 	std::ifstream file(g_ConfigPath);
 	if (!file)
-	{
-		std::ofstream sample(g_ConfigPath);
-		sample << "# One target per line: TIER STAT GOAL\n"
-			"# TIER is N, D, M, R or E. STAT is a REF from dat_sta.json.\n"
-			"# GOAL is any (stat present, the default), max (best possible roll),\n"
-			"# a number (displayed value to reach), or roll:N.\n"
-			"# D dodge_add any\n"
-			"# D dodge_add max\n"
-			"# D dodge_add 1500\n"
-			"max_attempts 50\n"
-			"# Stop before any material would drop below this count.\n"
-			"min_stock 0\n"
-			"allow_pure_loss 0\n";
 		return;
-	}
 
 	std::string line;
 	while (std::getline(file, line))
@@ -207,8 +204,30 @@ static void LoadConfig()
 	}
 }
 
+void SaveConfig()
+{
+	std::ofstream file(g_ConfigPath);
+	file << "# Written by the overlay. One target per line: TIER STAT GOAL\n"
+		"# GOAL is any, max, a number (displayed value to reach), or roll:N.\n";
+	for (const Target& target : g_Targets)
+	{
+		file << target.tier << ' ' << target.stat << ' ';
+		switch (target.goal)
+		{
+		case Goal::Any: file << "any"; break;
+		case Goal::MaxRoll: file << "max"; break;
+		case Goal::Roll: file << "roll:" << target.amount; break;
+		default: file << target.amount; break;
+		}
+		file << '\n';
+	}
+	file << "max_attempts " << g_MaxAttempts << '\n'
+		<< "min_stock " << g_MinStock << '\n'
+		<< "allow_pure_loss " << (g_AllowPureLoss ? 1 : 0) << '\n';
+}
+
 // Best roll for a tier. Percent stats scale down on low-level items.
-static double MaxRoll(const std::string& Tier, const std::string& Stat)
+double MaxRoll(const std::string& Tier, const std::string& Stat)
 {
 	double base = Tier == "N" ? 100 : Tier == "E" ? 40 : 65;
 	bool percent = Stat.ends_with("_percent") || Stat.ends_with("_mult");
@@ -231,7 +250,8 @@ static bool Met(const Target& Target, const Affix& Affix)
 
 static void Stop(const char* Reason)
 {
-	Log("stopped after %d reforges: %s", g_Attempts, Reason);
+	Note("stopped after %d reforges: %s", g_Attempts, Reason);
+	g_Status = Reason;
 	g_Running = false;
 }
 
@@ -261,14 +281,14 @@ static int FindRecipe(CInstance* Ui, int Type, const std::string& Tier)
 	return -1;
 }
 
-static const char* MaterialName(int Id)
+const char* MaterialName(int Id)
 {
 	static const char* names[] = {
 		"Normal Slormeline", "Magic Slormeline", "Rare Slormeline", "Epic Slormeline", "Legendary Slormeline",
 		"Slormandrite of Fate", "Slormandrite of Negation", "Slormandrite of True Potential",
 		"Slormandrite of Aptitude", "Slormandrite of Harmony", "Slormandrite of Virtue",
 	};
-	return Id >= 0 && Id < 11 ? names[Id] : "unknown material";
+	return Id >= 0 && Id < MATERIAL_COUNT ? names[Id] : "unknown material";
 }
 
 // With the third argument set the game only reports the count; the panel calls it this way every frame.
@@ -327,14 +347,14 @@ static bool CanAfford(CInstance* Self, CInstance* Other, int Recipe, std::string
 	return true;
 }
 
-// No config targets: take the scores recipe selected in the panel and aim every stat it rerolls at max.
+// No targets set: take the scores recipe selected in the panel and aim every stat it rerolls at max.
 static bool TargetsFromSelectedRecipe(CInstance* Self, CInstance* Other)
 {
 	RValue recipes = g_Yytk->CallBuiltin("variable_instance_get", { RValue(Self), RValue("blacksmith_recipes") });
 	RValue selected = g_Yytk->CallBuiltin("variable_instance_get", { RValue(Self), RValue("blacksmith_selected_recipe") });
 	if (!recipes.IsArray() || !selected.IsNumberConvertible() || !ReadSlotItem(Self, Other))
 	{
-		Log("open the reforge panel with an item in the slot first");
+		Note("open the reforge panel with an item in the slot first");
 		return false;
 	}
 
@@ -345,7 +365,7 @@ static bool TargetsFromSelectedRecipe(CInstance* Self, CInstance* Other)
 	std::vector<RValue> fields = list[index].ToVector();
 	if (fields.size() < 5 || static_cast<int>(ToNumber(fields[2])) != 0)
 	{
-		Log("select a 'Reforge Scores' recipe first (selected: %s)", fields.empty() ? "?" : fields[0].ToString().c_str());
+		Note("add a target, or select a 'Reforge Scores' recipe (selected: %s)", fields.empty() ? "?" : fields[0].ToString().c_str());
 		return false;
 	}
 
@@ -364,59 +384,111 @@ static bool TargetsFromSelectedRecipe(CInstance* Self, CInstance* Other)
 		target.tier = affix.tier;
 		target.stat = affix.stat;
 		target.goal = Goal::MaxRoll;
-		g_Targets.push_back(target);
+		g_RunTargets.push_back(target);
 	}
-	Log("using selected recipe '%s'", fields[0].ToString().c_str());
-	return !g_Targets.empty();
+	Note("using selected recipe '%s'", fields[0].ToString().c_str());
+	return !g_RunTargets.empty();
+}
+
+// What the overlay shows: item, recipes, stock.
+static void Refresh(CInstance* Self, CInstance* Other)
+{
+	bool had_item = g_HasItem;
+	g_HasItem = ReadSlotItem(Self, Other);
+	if (g_HasItem != had_item)
+		Log("reforge slot %s", g_HasItem ? "has an item" : "is empty");
+	g_Recipes.clear();
+	if (!g_HasItem)
+		return;
+
+	RValue recipes = g_Yytk->CallBuiltin("variable_instance_get", { RValue(Self), RValue("blacksmith_recipes") });
+	if (recipes.IsArray())
+	{
+		for (const RValue& entry : recipes.ToVector())
+		{
+			if (!entry.IsArray())
+				continue;
+			std::vector<RValue> fields = entry.ToVector();
+			if (fields.size() < 5)
+				continue;
+			Recipe recipe;
+			recipe.label = fields[0].ToString();
+			recipe.type = static_cast<int>(ToNumber(fields[2]));
+			recipe.materials = fields[3].ToString();
+			recipe.gold = ToNumber(fields[4]);
+			if (fields.size() > 5 && fields[5].IsString())
+				recipe.tier = fields[5].ToString();
+			g_Recipes.push_back(recipe);
+		}
+	}
+
+	// Only ask about materials the reforge recipes use.
+	for (const Recipe& recipe : g_Recipes)
+	{
+		if (recipe.type != 0 && recipe.type != 1)
+			continue;
+		std::istringstream ids(recipe.materials);
+		std::string id_text;
+		while (std::getline(ids, id_text, '|'))
+		{
+			int id = atoi(id_text.c_str());
+			if (id_text.find_first_not_of("0123456789") == std::string::npos && !id_text.empty() && id < MATERIAL_COUNT)
+				g_Stock[id] = MaterialStock(Self, Other, id);
+		}
+	}
+	g_Gold = ToNumber(g_Yytk->CallBuiltin("variable_global_get", { RValue("gold") }));
+}
+
+static void Start(CInstance* Self, CInstance* Other)
+{
+	g_AllScores = false;
+	g_RunTargets = g_Targets;
+	if (g_RunTargets.empty() && !TargetsFromSelectedRecipe(Self, Other))
+	{
+		g_Status = "nothing to do";
+		return;
+	}
+	g_Running = true;
+	g_Attempts = 0;
+	g_Cooldown = 0;
+	g_Status = "running";
+	Note("started, %d targets, max %d reforges", static_cast<int>(g_RunTargets.size()), g_MaxAttempts);
 }
 
 static void Tick(CInstance* Self, CInstance* Other)
 {
+	std::lock_guard guard(g_Lock);
+
 	bool key_down = (GetAsyncKeyState(VK_F6) & 0x8000) != 0;
-	if (key_down && !g_KeyWasDown)
+	if (key_down && !g_KeyWasDown && GetForegroundWindow() == GetActiveWindow())
 	{
-		if (g_Running)
-		{
-			Stop("F6 pressed");
-		}
-		else
-		{
-			LoadConfig();
-			g_AllScores = false;
-			if (g_Targets.empty() && !TargetsFromSelectedRecipe(Self, Other))
-			{
-				Log("nothing to do");
-			}
-			else
-			{
-				g_Running = true;
-				g_Attempts = 0;
-				g_Cooldown = 0;
-				Log("started, %d targets, max %d reforges", static_cast<int>(g_Targets.size()), g_MaxAttempts);
-				RValue recipes = g_Yytk->CallBuiltin("variable_instance_get", { RValue(Self), RValue("blacksmith_recipes") });
-				if (recipes.IsArray())
-				{
-					for (const RValue& recipe : recipes.ToVector())
-					{
-						std::string fields;
-						if (recipe.IsArray())
-							for (const RValue& field : recipe.ToVector()) fields += field.ToString() + " ; ";
-						Log("recipe: %s", fields.c_str());
-					}
-				}
-			}
-		}
+		g_Visible = !g_Visible;
+		Log("overlay %s", g_Visible ? "shown" : "hidden");
 	}
 	g_KeyWasDown = key_down;
 
+	if (g_WantStop && g_Running)
+		Stop("stopped by you");
+	if (g_WantStart && !g_Running)
+		Start(Self, Other);
+	g_WantStart = g_WantStop = false;
+
 	if (!g_Running)
+	{
+		if (g_Visible && --g_Refresh <= 0)
+		{
+			g_Refresh = 10;
+			Refresh(Self, Other);
+		}
 		return;
+	}
 	if (g_Cooldown > 0)
 	{
 		g_Cooldown--;
 		return;
 	}
-	if (!ReadSlotItem(Self, Other))
+	Refresh(Self, Other);
+	if (!g_HasItem)
 		return Stop("no single item found in the reforge slot");
 
 	for (const Affix& affix : g_Item)
@@ -425,7 +497,7 @@ static void Tick(CInstance* Self, CInstance* Other)
 	// First unmet target decides the next recipe.
 	const Target* pending = nullptr;
 	int recipe_type = 0;
-	for (const Target& target : g_Targets)
+	for (const Target& target : g_RunTargets)
 	{
 		const Affix* match = nullptr;
 		for (const Affix& affix : g_Item)
@@ -448,7 +520,7 @@ static void Tick(CInstance* Self, CInstance* Other)
 		if ((!g_AllScores && affix.tier != pending->tier) || affix.locked)
 			continue;
 		if (affix.pure > 100 && !g_AllowPureLoss)
-			return Stop("tier has a pure stat (set allow_pure_loss 1 to reroll it)");
+			return Stop("tier has a pure stat (allow rerolling pure stats to continue)");
 	}
 
 	int recipe = FindRecipe(Self, recipe_type, g_AllScores ? "" : pending->tier);
@@ -470,7 +542,7 @@ static void Tick(CInstance* Self, CInstance* Other)
 	if (!applied.IsArray())
 		return Stop("the game did not apply the recipe");
 
-	Log("reforge %d: %s %s for %s", g_Attempts, pending->tier.c_str(), recipe_type ? "stats" : "scores", pending->stat.c_str());
+	Note("reforge %d: %s %s for %s", g_Attempts, pending->tier.c_str(), recipe_type ? "stats" : "scores", StatName(pending->stat).c_str());
 }
 
 // Runs once per frame, after the UI object's Step event.
@@ -480,12 +552,22 @@ static void CodeCallback(FWCodeEvent& Event)
 	if (!code || !code->GetName() || std::string_view(code->GetName()) != "gml_Object_obj_ui_next_gen_Step_0")
 		return;
 
-	static bool announced = false;
-	if (!announced)
+	// The swap chain only exists once the game is running.
+	static bool installed = false;
+	if (!installed)
 	{
-		announced = true;
-		Log("step callback active");
+		installed = true;
+		Log("step callback active, overlay hook %s", OverlayInstall(g_Yytk) ? "installed" : "FAILED");
 	}
+
+	// Input aimed at the overlay must not reach the game's UI.
+	if (OverlayWantsMouse())
+	{
+		g_Yytk->CallBuiltin("mouse_clear", { RValue(1.0) });
+		g_Yytk->CallBuiltin("mouse_clear", { RValue(2.0) });
+	}
+	if (OverlayWantsKeys())
+		g_Yytk->CallBuiltin("io_clear", {});
 
 	Event.Call();
 	Tick(self, other);
@@ -511,6 +593,8 @@ EXPORTED AurieStatus ModuleInitialize(
 
 	g_ConfigPath = ModulePath.parent_path() / "SlormReforger.txt";
 	LoadConfig();
+	LoadGameData();
+	OverlaySetIniPath((ModulePath.parent_path() / "SlormReforger.layout.ini").string());
 
 	g_StatFromScore = FindScript("gml_Script_scr_loot_stat_from_score");
 	g_Apply = FindScript("gml_Script_scr_blacksmith_recipe_apply");
@@ -528,6 +612,7 @@ EXPORTED AurieStatus ModuleInitialize(
 		return status;
 	}
 
-	Log("loaded, F6 at the reforge panel starts/stops, config %s", g_ConfigPath.string().c_str());
+
+	Log("loaded, %d stats, F6 shows/hides the overlay, config %s", static_cast<int>(g_Stats.size()), g_ConfigPath.string().c_str());
 	return AURIE_SUCCESS;
 }
