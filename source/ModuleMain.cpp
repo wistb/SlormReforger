@@ -1397,7 +1397,8 @@ static void CodeCallback(FWCodeEvent& Event)
 	if (OverlayWantsKeys())
 		g_Yytk->CallBuiltin("io_clear", {});
 
-	Event.Call();
+	// Another mod may have run the event already; running it twice doubles every click.
+	if (!Event.CalledOriginal()) Event.Call();
 	Tick(self, other);
 }
 
