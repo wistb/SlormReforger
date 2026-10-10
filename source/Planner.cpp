@@ -6,6 +6,43 @@
 std::vector<Preset> g_Presets;
 int g_ActivePreset = -1;
 
+void ImportPreset(const Preset& From, const PresetSlot& Slot)
+{
+	g_Targets.clear();
+	for (const Target& target : Slot.targets)
+		if (target.tier != "MA" || From.hero == g_HeroClass) g_Targets.push_back(target);
+	// What can roll depends on the item level, so a higher-level build levels the item first.
+	if (Slot.level > g_ItemLevel)
+	{
+		Target level;
+		level.tier = "LV";
+		level.stat = "level";
+		g_Targets.insert(g_Targets.begin(), level);
+	}
+}
+
+// A build has two rings: the one sharing more stats with the item wins, the first on a tie.
+const PresetSlot* BestPresetSlot(const Preset& From)
+{
+	const PresetSlot* best = nullptr;
+	int best_shared = -1;
+	for (const PresetSlot& slot : From.slots)
+	{
+		if (slot.slot != Lower(g_ItemSlot))
+			continue;
+		int shared = 0;
+		for (const Target& target : slot.targets)
+			for (const Affix& affix : g_Item)
+				if (affix.stat == target.stat) shared++;
+		if (shared > best_shared)
+		{
+			best = &slot;
+			best_shared = shared;
+		}
+	}
+	return best;
+}
+
 namespace
 {
 	const char ALPHABET[] = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_0123456789$";

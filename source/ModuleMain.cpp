@@ -27,6 +27,7 @@ int g_MinStock[MATERIAL_COUNT] = {};
 bool g_AutoLock = false;
 bool g_AutoAdd = false;
 bool g_MoveTiers = false;
+bool g_AutoImport = false;
 Appearance g_Appearance;
 bool g_SuppressToggle = false;
 
@@ -183,15 +184,16 @@ static void ReadPools(CInstance* Self, CInstance* Other, const RValue& Item)
 	}
 }
 
-// Reads the item in the reforge slot, with the values the game would display.
-static bool ReadSlotItem(CInstance* Self, CInstance* Other)
+// The item in the reforge slot and its hero's index: -1 when no single hero has one there,
+// -2 while there is no inventory to read.
+static int FindSlotItem(RValue& Item)
 {
 	RValue inventory = g_Yytk->CallBuiltin("variable_global_get", { RValue("inventory") });
 	if (!inventory.IsArray())
-		return false;
+		return -2;
 
 	std::vector<RValue> heroes = inventory.ToVector();
-	RValue item;
+	int owner = -1;
 	int found = 0;
 	for (size_t h = 0; h < heroes.size(); h++)
 	{
@@ -204,14 +206,23 @@ static bool ReadSlotItem(CInstance* Self, CInstance* Other)
 		RValue slot = g_Yytk->CallBuiltin("array_get", { hero, RValue(static_cast<double>(REFORGE_SLOT)) });
 		if (IsItem(slot))
 		{
-			item = slot;
-			g_HeroClass = static_cast<int>(h);
+			Item = slot;
+			owner = static_cast<int>(h);
 			found++;
 		}
 	}
 	// More than one hero has an item parked in the slot; can't tell which is open.
-	if (found != 1 || !ReadItem(item, g_Item))
+	return found == 1 ? owner : -1;
+}
+
+// Reads the item in the reforge slot, with the values the game would display.
+static bool ReadSlotItem(CInstance* Self, CInstance* Other)
+{
+	RValue item;
+	int owner = FindSlotItem(item);
+	if (owner < 0 || !ReadItem(item, g_Item))
 		return false;
+	g_HeroClass = owner;
 
 	std::vector<RValue> parts = item.ToVector();
 	for (Affix& affix : g_Item)
@@ -245,6 +256,7 @@ static void LoadConfig()
 	g_AutoLock = false;
 	g_AutoAdd = false;
 	g_MoveTiers = false;
+	g_AutoImport = false;
 	g_Presets.clear();
 	g_ActivePreset = -1;
 	g_Appearance = Appearance();
@@ -273,6 +285,7 @@ static void LoadConfig()
 		if (first == "auto_lock") { int flag = 0; words >> flag; g_AutoLock = flag != 0; continue; }
 		if (first == "auto_add") { int flag = 0; words >> flag; g_AutoAdd = flag != 0; continue; }
 		if (first == "move_tiers") { int flag = 0; words >> flag; g_MoveTiers = flag != 0; continue; }
+		if (first == "auto_import") { int flag = 0; words >> flag; g_AutoImport = flag != 0; continue; }
 		if (first == "active_preset") { words >> g_ActivePreset; continue; }
 		if (first == "preset")
 		{
@@ -343,6 +356,7 @@ void SaveConfig()
 		<< "auto_lock " << (g_AutoLock ? 1 : 0) << '\n'
 		<< "auto_add " << (g_AutoAdd ? 1 : 0) << '\n'
 		<< "move_tiers " << (g_MoveTiers ? 1 : 0) << '\n'
+		<< "auto_import " << (g_AutoImport ? 1 : 0) << '\n'
 		<< "active_preset " << g_ActivePreset << '\n'
 		<< "theme " << g_Appearance.theme << '\n'
 		<< "accent " << (g_Appearance.custom_accent ? 1 : 0) << ' ' << g_Appearance.accent[0] << ' ' << g_Appearance.accent[1] << ' ' << g_Appearance.accent[2] << '\n'
@@ -1001,6 +1015,48 @@ static void Refresh(CInstance* Self, CInstance* Other)
 	g_Gold = ToNumber(g_Yytk->CallBuiltin("variable_global_get", { RValue("gold") }));
 }
 
+// Loads the active preset's targets when a different item lands in the reforge slot.
+// The slot keeps its item while the menu is closed, so it is watched there too:
+// reopening the panel on the same item leaves the targets alone.
+static void AutoImport()
+{
+	// Hero and gear slot of the item last seen, empty for none.
+	static std::string last;
+	static bool known = false;
+	static bool pending = false;
+
+	RValue item;
+	int owner = FindSlotItem(item);
+	if (owner == -2)
+		return;
+	std::string now;
+	if (owner >= 0)
+	{
+		std::vector<RValue> header = item.ToVector()[0].ToVector();
+		now = std::to_string(owner) + ' ' + (header.size() > 1 ? header[1].ToString() : "");
+	}
+	// The item found in the slot at launch was there before; it does not count.
+	if (known && now != last)
+		pending = !now.empty();
+	known = true;
+	last = now;
+
+	if (!g_AutoImport)
+		pending = false;
+	if (!pending || !g_HasItem)
+		return;
+	pending = false;
+	if (g_ActivePreset < 0 || g_ActivePreset >= static_cast<int>(g_Presets.size()))
+		return;
+	const Preset& preset = g_Presets[g_ActivePreset];
+	const PresetSlot* slot = BestPresetSlot(preset);
+	if (!slot)
+		return;
+	ImportPreset(preset, *slot);
+	SaveConfig();
+	Note("imported the %s from %s", Lower(slot->label).c_str(), preset.name.c_str());
+}
+
 static void Start(CInstance* Self, CInstance* Other)
 {
 	g_AllScores = false;
@@ -1084,6 +1140,7 @@ static void Tick(CInstance* Self, CInstance* Other)
 			// Taking the item out closes the overlay, however it was opened.
 			if (had_item && !g_HasItem)
 				g_Manual = false;
+			AutoImport();
 		}
 		return;
 	}

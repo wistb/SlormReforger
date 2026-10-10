@@ -233,17 +233,7 @@ static bool DrawImportPreset()
 		if (i > 0) ImGui::SameLine();
 		if (ImGui::Button(label.c_str()))
 		{
-			g_Targets.clear();
-			for (const Target& target : matches[i]->targets)
-				if (target.tier != "MA" || preset.hero == g_HeroClass) g_Targets.push_back(target);
-			// What can roll depends on the item level, so a higher-level build levels the item first.
-			if (matches[i]->level > g_ItemLevel)
-			{
-				Target level;
-				level.tier = "LV";
-				level.stat = "level";
-				g_Targets.insert(g_Targets.begin(), level);
-			}
+			ImportPreset(preset, *matches[i]);
 			changed = true;
 		}
 		std::string tip = "Load the " + Lower(matches[i]->label) + " from " + preset.name + ".\nThis replaces all current targets.";
@@ -305,6 +295,8 @@ static bool DrawPresets()
 		ImGui::TextColored({ 1.0f, 0.4f, 0.4f, 1.0f }, "%s", error.c_str());
 
 	ImGui::SeparatorText("Presets");
+	changed |= ImGui::Checkbox("Import automatically", &g_AutoImport);
+	ImGui::SetItemTooltip("Putting an item in the reforge slot loads the selected preset's targets for it.\nThis replaces all current targets. Of two rings, the one closer to the item is used.");
 	if (g_Presets.empty())
 		ImGui::TextDisabled("None yet.");
 	for (size_t i = 0; i < g_Presets.size(); i++)

@@ -117,6 +117,8 @@ extern bool g_AutoAdd;
 // Make room for a target: reroll its stat out of another tier, and unlock a stat
 // that is not a target when the target's tier is fully locked.
 extern bool g_MoveTiers;
+// Load the active preset's targets when a different item lands in the reforge slot.
+extern bool g_AutoImport;
 extern Appearance g_Appearance;
 // Set while the hotkey is being rebound, so the key press does not also toggle the overlay.
 extern bool g_SuppressToggle;
@@ -202,6 +204,10 @@ extern std::vector<Preset> g_Presets;
 // Preset the "Import preset" button reads, -1 for none.
 extern int g_ActivePreset;
 bool ParsePreset(const std::string& Text, Preset& Out, std::string& Error);
+// Replaces the targets with the preset's for one gear slot.
+void ImportPreset(const Preset& From, const PresetSlot& Slot);
+// The preset's slot for the item in the reforge slot, null for none.
+const PresetSlot* BestPresetSlot(const Preset& From);
 const char* HeroName(int Class);
 
 void LoadGameData();
