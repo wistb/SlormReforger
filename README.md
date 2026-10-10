@@ -24,7 +24,7 @@ It works through the game's own reforge recipes and pays their normal costs. It 
 - **Run log.** Every reroll and lock is listed, with the goldus spent at the end.
 - **Options.** Four themes, custom colors, opacity, text size and a rebindable hotkey.
 
-![Targets set before a run](nexus/sample1.png)
+![The Reforge tab after a run, with every target met](nexus/sample1.png)
 
 ## Install
 
@@ -49,11 +49,13 @@ To uninstall, delete `version.dll`, `SlormReforger-README.txt`, `aurie.log` and 
 
 F6 hides and shows the window, and opens it away from the blacksmith, where the Presets and Options tabs still work. The key can be changed on the Options tab.
 
+![The Options tab](nexus/sample3.png)
+
 To add a preset, open the Presets tab, paste a slorm-planner share link and press Import. Several presets can be kept; the selected one is what Import preset reads.
 
-Each target shows where it stands: green when met, yellow while there is work to do, red when reforging cannot get there.
+![The Presets tab with a build imported from slorm-planner](nexus/sample2.png)
 
-![All targets met](nexus/sample3.png)
+Each target shows where it stands: green when met, yellow while there is work to do, red when reforging cannot get there.
 
 ## How it works
 
